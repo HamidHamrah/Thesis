@@ -6,13 +6,20 @@ from .topology.generator import generate_as_topology
 from .topology.stats import topology_summary, sample_path_exists
 from .ci.synthetic import SyntheticCIProvider
 from .metrics.path_cost import compute_path_cost
-# Step 7 algorithm interface imports
 from .algorithms import BaselineLatency, AlgoContext
 from .benchmark.runner import run_benchmark
 from .benchmark.time_runner import run_time_benchmark
 from .algorithms import BaselineLatency, CIRoCore, AlgoContext
 from .benchmark.runner import run_benchmark
 from .benchmark.time_runner import run_time_benchmark
+from .algorithms import BaselineLatency, LowCarbBGP, AlgoContext
+from .benchmark.runner import run_benchmark
+from .benchmark.time_runner import run_time_benchmark
+from .device import generate_router_params
+from .algorithms.ospf_metrics import OspfMetricRouting, build_table1_metric_specs
+from .benchmark.paper_runner import run_paper_benchmark
+
+
 
 def run_step1(cfg: RunConfig, g: nx.Graph, ci: SyntheticCIProvider) -> None:
     summary = topology_summary(g)
@@ -180,6 +187,121 @@ def run_step7_baseline_only(cfg: RunConfig, g: nx.Graph, ci: SyntheticCIProvider
     print(f"  mean_latency (t=0..2): {[round(x,2) for x in cc.mean_latency_by_hour[:3]]}")
     print(f"  reroute_rate% (t=1..3): {[round(x,2) for x in cc.reroute_rate_by_hour[1:4]]}")
     print(f"  avg_reroute_rate% over day: {avg_reroute:.2f}")
+# ---------------------------------------------------------------------------   
+# step 9: Low-Carb BGP algorithm module (not shown here, see algorithms/lowcarb_bgp.py)
+# ---------------------------------------------------------------------------
+    print("\n=== Step 9: Baseline vs Low-Carb BGP (LCB) ===")
+    ctx = AlgoContext(k_paths=8)  # LCB uses instantaneous CIM; no forecast window needed
+
+    algos = [BaselineLatency(), LowCarbBGP()]
+
+    _, summaries = run_benchmark(
+        g=g,
+        ci=ci,
+        algorithms=algos,
+        baseline_name="baseline_latency",
+        ctx=ctx,
+        n_demands=200,
+        hour=0,
+        seed=cfg.topology.seed,
+    )
+
+    for name, s in summaries.items():
+        print(f"\nAlgorithm: {name}")
+        print(f"  mean_carbon: {s.mean_carbon:.2f}")
+        print(f"  mean_latency_ms: {s.mean_latency_ms:.2f}")
+        print(f"  mean_hops: {s.mean_hops:.2f}")
+        print(f"  mean_carbon_reduction_vs_base(%): {s.mean_carbon_reduction_pct_vs_base:.2f}")
+        print(f"  mean_latency_increase_vs_base(%): {s.mean_latency_increase_pct_vs_base:.2f}")
+        print(f"  pct_paths_changed_vs_base(%): {s.pct_paths_changed_vs_base:.2f}")
+
+    ts = run_time_benchmark(
+        g=g,
+        ci=ci,
+        algorithms=algos,
+        ctx=ctx,
+        n_demands=200,
+        horizon_hours=cfg.ci.horizon_hours,
+        seed=cfg.topology.seed,
+    )
+
+    lcb = ts["lowcarb_bgp"]
+    avg_reroute = sum(lcb.reroute_rate_by_hour[1:]) / max(1, len(lcb.reroute_rate_by_hour)-1)
+    print("\nLow-Carb BGP time-series quick check:")
+    print(f"  mean_carbon (t=0..2): {[round(x,2) for x in lcb.mean_carbon_by_hour[:3]]}")
+    print(f"  mean_latency (t=0..2): {[round(x,2) for x in lcb.mean_latency_by_hour[:3]]}")
+    print(f"  reroute_rate% (t=1..3): {[round(x,2) for x in lcb.reroute_rate_by_hour[1:4]]}")
+    print(f"  avg_reroute_rate% over day: {avg_reroute:.2f}")
+
+# ---------------------------------------------------------------------------
+# step 10: OSPF Metric Routing algorithm module (not shown here, see algorithms/ospf_metrics.py)
+# ---------------------------------------------------------------------------
+    print("\n=== Step 10: Paper Table-1 OSPF-metric routing (OSPF vs C vs C+IncD) ===")
+
+    router_params = generate_router_params(cfg.topology.n_as, seed=cfg.topology.seed)
+    specs = build_table1_metric_specs(router_params, ci)
+
+    algos = [
+        OspfMetricRouting(specs["OSPF"]),
+        OspfMetricRouting(specs["C"]),
+        OspfMetricRouting(specs["C+IncD"]),
+    ]
+
+    ctx = AlgoContext(k_paths=8)  # not used here, but keep consistent API
+
+    _, summaries = run_benchmark(
+        g=g,
+        ci=ci,
+        algorithms=algos,
+        baseline_name="OSPF",
+        ctx=ctx,
+        n_demands=200,
+        hour=0,
+        seed=cfg.topology.seed,
+    )
+
+    for name, s in summaries.items():
+        print(f"\nAlgorithm: {name}")
+        print(f"  mean_carbon: {s.mean_carbon:.2f}")
+        print(f"  mean_latency_ms: {s.mean_latency_ms:.2f}")
+        print(f"  mean_hops: {s.mean_hops:.2f}")
+        print(f"  mean_carbon_reduction_vs_base(%): {s.mean_carbon_reduction_pct_vs_base:.2f}")
+        print(f"  mean_latency_increase_vs_base(%): {s.mean_latency_increase_pct_vs_base:.2f}")
+        print(f"  pct_paths_changed_vs_base(%): {s.pct_paths_changed_vs_base:.2f}")
+    
+
+    #step 10.2
+    print("\n=== Step 10.2: Paper metric evaluation (IncD emissions proxy) ===")
+
+    # print lambda sanity (make sure max prints too)
+    lams = [router_params[a].incd_w_per_mbps for a in router_params]
+    print("IncD(lambda) sanity: min/mean/max =",
+        round(min(lams), 6), round(sum(lams)/len(lams), 6), round(max(lams), 6))
+
+    _, paper_summaries = run_paper_benchmark(
+        g=g,
+        ci=ci,
+        router_params=router_params,
+        algorithms=algos,          # same 3 algos: OSPF, C, C+IncD
+        baseline_name="OSPF",
+        ctx=ctx,
+        n_demands=200,
+        hour=0,
+        demand_mbps=100.0,         # fixed synthetic demand for Step 10.2
+        seed=cfg.topology.seed,
+    )
+
+    for name, s in paper_summaries.items():
+        print(f"\nAlgorithm: {name}")
+        print(f"  mean_emissions: {s.mean_emissions:.6f}")
+        print(f"  mean_latency_ms: {s.mean_latency_ms:.2f}")
+        print(f"  mean_hops: {s.mean_hops:.2f}")
+        print(f"  mean_emissions_reduction_vs_base(%): {s.mean_emissions_reduction_pct_vs_base:.2f}")
+        print(f"  mean_latency_increase_vs_base(%): {s.mean_latency_increase_pct_vs_base:.2f}")
+        print(f"  pct_paths_changed_vs_base(%): {s.pct_paths_changed_vs_base:.2f}")
+
+
+
 
     
 
