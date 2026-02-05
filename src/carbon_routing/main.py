@@ -15,9 +15,12 @@ from .benchmark.time_runner import run_time_benchmark
 from .algorithms import BaselineLatency, LowCarbBGP, AlgoContext
 from .benchmark.runner import run_benchmark
 from .benchmark.time_runner import run_time_benchmark
+from .algorithms import cate as cate_mod
 from .device import generate_router_params
 from .algorithms.ospf_metrics import OspfMetricRouting, build_table1_metric_specs
 from .benchmark.paper_runner import run_paper_benchmark
+from .traffic import generate_synthetic_tm
+from .algorithms.cate import run_cate
 
 
 
@@ -299,6 +302,85 @@ def run_step7_baseline_only(cfg: RunConfig, g: nx.Graph, ci: SyntheticCIProvider
         print(f"  mean_emissions_reduction_vs_base(%): {s.mean_emissions_reduction_pct_vs_base:.2f}")
         print(f"  mean_latency_increase_vs_base(%): {s.mean_latency_increase_pct_vs_base:.2f}")
         print(f"  pct_paths_changed_vs_base(%): {s.pct_paths_changed_vs_base:.2f}")
+
+    # ---------------------------------------------------------------------------
+    # step 11: CATE algorithm module (not shown here, see algorithms/cate.py)
+    # ---------------------------------------------------------------------------
+    print("\n=== Step 11: CATE (centralized TE + link shutdown) ===")
+
+    # router_params already created in Step 10; if not, create here:
+    # router_params = generate_router_params(cfg.topology.n_as, seed=cfg.topology.seed)
+
+    tm = generate_synthetic_tm(
+        n_nodes=cfg.topology.n_as,
+        n_demands=600,
+        demand_mbps_range=(50.0, 500.0),
+        seed=cfg.topology.seed,
+    )
+
+    # Scale TM down to a target max utilization (paper-style calibration).
+    default_capacity_mbps = 2000.0
+    target_max_util = 0.8
+    scale_graph = g.copy()
+    cate_mod._ensure_edge_capacity(scale_graph, default_capacity_mbps=default_capacity_mbps)
+    _, _, dir_load, feas = cate_mod._route_tm_and_intensities(
+        scale_graph, ci, router_params, tm, hour=0
+    )
+    if not feas:
+        raise RuntimeError("Initial TM is not routable on the starting graph.")
+
+    # Compute true max utilization (don't early-return like _capacity_ok).
+    max_util = 0.0
+    for (a, b), load in dir_load.items():
+        if not scale_graph.has_edge(a, b):
+            raise RuntimeError("TM routing used a non-existent edge.")
+        cap = float(scale_graph[a][b].get("capacity_mbps", 0.0))
+        if cap <= 0:
+            raise RuntimeError("Edge capacity must be positive for CATE.")
+        util = float(load) / cap
+        if util > max_util:
+            max_util = util
+
+    if max_util > target_max_util and max_util > 0:
+        scale = target_max_util / max_util
+        tm = {k: v * scale for k, v in tm.items()}
+        print(
+            f"Scaled TM by {scale:.3f} to target max util {target_max_util:.2f} "
+            f"(was {max_util:.3f})."
+        )
+
+    cate_res = run_cate(
+        g=g,
+        ci=ci,
+        router_params=router_params,
+        tm=tm,
+        hour=0,
+        default_capacity_mbps=default_capacity_mbps,
+        port_beta_kw_per_link=0.005,
+        max_iterations=g.number_of_edges(),
+    )
+
+
+    print(f"edges initial: {cate_res.edges_initial}")
+    print(f"edges final  : {cate_res.edges_final}")
+    print(f"links disabled: {cate_res.links_disabled}")
+    print(f"connected final: {cate_res.connected_final}")
+    print(f"max link utilization: {cate_res.max_link_utilization:.3f}")
+
+    print("\nEmissions breakdown (paper-style proxy):")
+    print(f"  initial dynamic_node: {cate_res.emissions_initial.dynamic_node:.6f}")
+    print(f"  initial idle_ports  : {cate_res.emissions_initial.idle_ports:.6f}")
+    print(f"  initial total       : {cate_res.emissions_initial.total:.6f}")
+
+    print(f"  final dynamic_node  : {cate_res.emissions_final.dynamic_node:.6f}")
+    print(f"  final idle_ports    : {cate_res.emissions_final.idle_ports:.6f}")
+    print(f"  final total         : {cate_res.emissions_final.total:.6f}")
+
+    print(f"\nTotal reduction vs initial: {cate_res.emissions_reduction_pct:.2f}%")
+    print(f"Accepted removals: {len(cate_res.accepted_removals)} (show first 10) -> {cate_res.accepted_removals[:10]}")
+    print(f"stop_reason: {cate_res.stop_reason}")
+    print(f"history (last 5): {cate_res.history[-5:]}")
+
 
 
 
