@@ -1,6 +1,6 @@
 from __future__ import annotations
 import networkx as nx
-from src.carbon_routing.config import TopologyConfig
+from carbon_routing.config import TopologyConfig
 
 def generate_as_topology(cfg: TopologyConfig) -> nx.Graph:
     """

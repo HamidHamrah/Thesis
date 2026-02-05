@@ -2,7 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Sequence, List
 import numpy as np
-from src.carbon_routing.config import CIConfig
+from carbon_routing.config import CIConfig
 from .base import CIProvider
 
 # --- Synthetic CI Provider ---
