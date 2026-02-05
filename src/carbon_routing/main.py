@@ -1,19 +1,18 @@
 from __future__ import annotations
-
 import random
 import networkx as nx
-
 from .config import RunConfig
 from .topology.generator import generate_as_topology
 from .topology.stats import topology_summary, sample_path_exists
 from .ci.synthetic import SyntheticCIProvider
 from .metrics.path_cost import compute_path_cost
-
 # Step 7 algorithm interface imports
 from .algorithms import BaselineLatency, AlgoContext
 from .benchmark.runner import run_benchmark
 from .benchmark.time_runner import run_time_benchmark
-
+from .algorithms import BaselineLatency, CIRoCore, AlgoContext
+from .benchmark.runner import run_benchmark
+from .benchmark.time_runner import run_time_benchmark
 
 def run_step1(cfg: RunConfig, g: nx.Graph, ci: SyntheticCIProvider) -> None:
     summary = topology_summary(g)
@@ -137,6 +136,52 @@ def run_step7_baseline_only(cfg: RunConfig, g: nx.Graph, ci: SyntheticCIProvider
     print(f"  reroute_rate% (t=1..3): {[round(x, 2) for x in b.reroute_rate_by_hour[1:4]]}")
     print(f"  avg_reroute_rate%: {avg_reroute:.2f}")
 
+# Step 7: baseline isolated as its own algorithm module
+# Step 8: CIRoCore algorithm module (not shown here, see algorithms/cir_o_core.py)
+    print("\n=== Step 8: Baseline vs CIRo-Core (forecast-aware) ===")
+    ctx = AlgoContext(k_paths=8, forecast_window_hours=4)
+
+    algos = [BaselineLatency(), CIRoCore()]
+
+    _, summaries = run_benchmark(
+        g=g,
+        ci=ci,
+        algorithms=algos,
+        baseline_name="baseline_latency",
+        ctx=ctx,
+        n_demands=200,
+        hour=0,
+        seed=cfg.topology.seed,
+    )
+
+    for name, s in summaries.items():
+        print(f"\nAlgorithm: {name}")
+        print(f"  mean_carbon: {s.mean_carbon:.2f}")
+        print(f"  mean_latency_ms: {s.mean_latency_ms:.2f}")
+        print(f"  mean_hops: {s.mean_hops:.2f}")
+        print(f"  mean_carbon_reduction_vs_base(%): {s.mean_carbon_reduction_pct_vs_base:.2f}")
+        print(f"  mean_latency_increase_vs_base(%): {s.mean_latency_increase_pct_vs_base:.2f}")
+        print(f"  pct_paths_changed_vs_base(%): {s.pct_paths_changed_vs_base:.2f}")
+
+    ts = run_time_benchmark(
+        g=g,
+        ci=ci,
+        algorithms=algos,
+        ctx=ctx,
+        n_demands=200,
+        horizon_hours=cfg.ci.horizon_hours,
+        seed=cfg.topology.seed,
+    )
+
+    cc = ts["ciro_core"]
+    avg_reroute = sum(cc.reroute_rate_by_hour[1:]) / max(1, len(cc.reroute_rate_by_hour)-1)
+    print("\nCIRo-Core time-series quick check:")
+    print(f"  mean_carbon (t=0..2): {[round(x,2) for x in cc.mean_carbon_by_hour[:3]]}")
+    print(f"  mean_latency (t=0..2): {[round(x,2) for x in cc.mean_latency_by_hour[:3]]}")
+    print(f"  reroute_rate% (t=1..3): {[round(x,2) for x in cc.reroute_rate_by_hour[1:4]]}")
+    print(f"  avg_reroute_rate% over day: {avg_reroute:.2f}")
+
+    
 
 def main() -> None:
     cfg = RunConfig()
