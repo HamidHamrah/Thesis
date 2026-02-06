@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+
 @dataclass(frozen=True)
 class TopologyConfig:
     n_as: int = 120 # number of autonomous systems
@@ -21,3 +22,7 @@ class CIConfig:
 class RunConfig:
     topology: TopologyConfig = TopologyConfig()
     ci: CIConfig = CIConfig()
+
+@dataclass(frozen=True)
+class CEConfig:
+    gamma: float = 1.0

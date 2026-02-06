@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Sequence, Dict, Tuple, List, TYPE_CHECKING
 
 import networkx as nx
 
 from ..ci.base import CIProvider
+if TYPE_CHECKING:
+    from ..device.models import RouterParams
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,21 @@ class AlgoContext:
 
     # CIRo-style forecast lookahead window (hours). Used by CIRo-Core.
     forecast_window_hours: int = 4
+
+    # Optional shared objects for algorithms that need more context (e.g., CE).
+    g: nx.Graph | None = None
+    ci: CIProvider | None = None
+    router_params: Dict[int, "RouterParams"] | None = None
+    tm: Dict[Tuple[int, int], float] | None = None
+
+
+@dataclass(frozen=True)
+class AlgorithmResult:
+    """
+    Generic algorithm output used by non-RoutingAlgorithm helpers (e.g., CE).
+    """
+    name: str
+    paths: Dict[Tuple[int, int], List[int]]
 
 
 class RoutingAlgorithm(ABC):

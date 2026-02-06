@@ -1,0 +1,4 @@
+cat > requirements.txt << EOF
+networkx>=3.2
+numpy>=1.26
+EOF

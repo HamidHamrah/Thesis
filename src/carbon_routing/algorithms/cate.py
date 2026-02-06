@@ -1,13 +1,12 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Tuple, List, Sequence, Optional
-
 import networkx as nx
-
 from .base import AlgoContext
 from ..ci.base import CIProvider
 from ..device.models import RouterParams
 from ..metrics.cate_emissions import compute_cate_emissions, CateEmissions
+from typing import Dict, Tuple, Sequence, Optional
 
 
 @dataclass(frozen=True)
@@ -23,6 +22,7 @@ class CateResult:
     accepted_removals: List[Tuple[int, int]]
     stop_reason: str
     history: List[Tuple[int, float, float]]  # (edges, emissions_total, max_util)
+    disabled_edges: List[Tuple[int, int]]
 
 
 def _ensure_edge_capacity(g: nx.Graph, default_capacity_mbps: float = 10_000.0) -> None:
@@ -284,4 +284,24 @@ def run_cate(
         accepted_removals=accepted,
         stop_reason=stop_reason,
         history=history,
+        disabled_edges=accepted,
     )
+
+def route_tm_paths(
+    g: nx.Graph,
+    ci: CIProvider,
+    router_params: Dict[int, RouterParams],
+    tm: Dict[Tuple[int, int], float],
+    hour: int,
+) -> Dict[Tuple[int, int], Sequence[int]]:
+    """
+    Route each (src,dst) in TM using the same receiver-based C+IncD shortest path
+    used inside CATE. Returns mapping (src,dst) -> path.
+    """
+    paths: Dict[Tuple[int, int], Sequence[int]] = {}
+    for (s, d), _mbps in tm.items():
+        p = _shortest_path_receiver_weighted(g, ci, router_params, s, d, hour)
+        if p is None:
+            raise RuntimeError(f"TM demand {s}->{d} unroutable at hour={hour}")
+        paths[(s, d)] = p
+    return paths

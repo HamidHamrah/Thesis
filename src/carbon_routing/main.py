@@ -21,6 +21,9 @@ from .algorithms.ospf_metrics import OspfMetricRouting, build_table1_metric_spec
 from .benchmark.paper_runner import run_paper_benchmark
 from .traffic import generate_synthetic_tm
 from .algorithms.cate import run_cate
+from .benchmark.cate_time_runner import run_cate_over_day
+from .algorithms.ce import run_ce
+from .metrics.utilization import compute_link_utilization
 
 
 
@@ -380,6 +383,120 @@ def run_step7_baseline_only(cfg: RunConfig, g: nx.Graph, ci: SyntheticCIProvider
     print(f"Accepted removals: {len(cate_res.accepted_removals)} (show first 10) -> {cate_res.accepted_removals[:10]}")
     print(f"stop_reason: {cate_res.stop_reason}")
     print(f"history (last 5): {cate_res.history[-5:]}")
+    # ---------------------------------------------------------------------------
+    # Step 12A: 24h CATE evaluation (time-intensive)
+    # Set RUN_STEP12 = True when you want to re-enable this section.
+    # ---------------------------------------------------------------------------
+    RUN_STEP12 = False
+    if RUN_STEP12:
+        print("\n=== Step 12A: 24h CATE evaluation ===")
+
+        day = run_cate_over_day(
+            base_graph=g,
+            ci=ci,
+            router_params=router_params,
+            tm=tm,  # reuse the same TM you generated for Step 11 (important!)
+            hours=24,
+            default_capacity_mbps=2000.0,
+            port_beta_kw_per_link=0.005,
+            max_iterations=1000,
+        )
+
+        # print compact table-like output
+        for r in day.rows[:5]:
+            print(f"h={r.hour:02d} edges={r.edges_final:3d} disabled={r.links_disabled:3d} "
+                f"util={r.max_util:.3f} total={r.total:.2f} stop={r.stop_reason}")
+
+        print("...")
+
+        for r in day.rows[-3:]:
+            print(f"h={r.hour:02d} edges={r.edges_final:3d} disabled={r.links_disabled:3d} "
+                f"util={r.max_util:.3f} total={r.total:.2f} stop={r.stop_reason}")
+
+        print("\nReroute rate % (h->h+1) first 5:", [round(x,2) for x in day.reroute_rate_pct[:5]])
+        print("Reroute rate % (h->h+1) last 5 :", [round(x,2) for x in day.reroute_rate_pct[-5:]])
+        print("Avg reroute rate % over day     :", round(sum(day.reroute_rate_pct)/len(day.reroute_rate_pct), 2))
+
+        print("\nTopology Jaccard (edge-set) first 5:", [round(x,3) for x in day.topo_change_jaccard[:5]])
+        print("Topology Jaccard (edge-set) last 5 :", [round(x,3) for x in day.topo_change_jaccard[-5:]])
+        print("Avg topology Jaccard over day      :", round(sum(day.topo_change_jaccard)/len(day.topo_change_jaccard), 3))
+
+    # ---------------------------------------------------------------------------
+    # Step 12B: CE algorithm module (not shown here, see algorithms/ce.py)
+    # ---------------------------------------------------------------------------
+    print("\n=== Step 12B: CE (utilization-aware C+IncD) over 24h ===")
+
+    # 1) Build a fixed set of src->dst pairs (same as you benchmark elsewhere)
+    # Sample source/destination pairs (repeatable).
+    n_pairs = 200
+    rng = random.Random(cfg.topology.seed)
+    pairs = []
+    while len(pairs) < n_pairs:
+        s = rng.randrange(0, g.number_of_nodes())
+        d = rng.randrange(0, g.number_of_nodes())
+        if s != d:
+            pairs.append((s, d))
+
+    # 2) Helper: compute directed link loads from paths assuming unit demand per pair
+    def _dir_load_from_unit_pairs(paths: dict[tuple[int, int], list[int]]) -> dict[tuple[int, int], float]:
+        load: dict[tuple[int, int], float] = {}
+        for _sd, p in paths.items():
+            for a, b in zip(p[:-1], p[1:]):
+                load[(a, b)] = load.get((a, b), 0.0) + 1.0
+        return load
+
+    # 3) Run over day: hour t uses utilization from hour t-1
+    prev_util_undir: dict[tuple[int, int], float] = {}
+    prev_paths: dict[tuple[int, int], list[int]] | None = None
+
+    rows = []
+    reroute_rates = []
+
+    ce_ctx = AlgoContext(g=g, ci=ci, router_params=router_params)
+    for h in range(24):
+        # Run CE at hour h
+        ce_res = run_ce(
+            ctx=ce_ctx,
+            pairs=pairs,
+            hour=h,
+            prev_util_undir=prev_util_undir,
+            gamma=cfg.ce.gamma if hasattr(cfg, "ce") else 1.0,
+        )
+        paths = ce_res.paths
+
+        # Compute mean carbon + latency using your existing helpers
+        carb_vals = []
+        lat_vals = []
+        for (s, d), p in paths.items():
+            carb_vals.append(path_carbon(g, ci, p, hour=h))
+            lat_vals.append(path_latency(g, p))
+
+        mean_c = sum(carb_vals) / len(carb_vals)
+        mean_l = sum(lat_vals) / len(lat_vals)
+
+        rr = 0.0
+        if prev_paths is not None:
+            changed = sum(1 for k in paths if paths[k] != prev_paths.get(k))
+            rr = 100.0 * changed / len(paths)
+        reroute_rates.append(rr)
+
+        # Update utilization for next hour (based on unit-demand flows)
+        dir_load = _dir_load_from_unit_pairs(paths)
+        prev_util_undir = compute_link_utilization(g, dir_load)
+
+        rows.append((h, mean_c, mean_l, rr))
+        prev_paths = paths
+
+    # Print summary
+    for h, mc, ml, rr in rows[:5]:
+        print(f"h={h:02d} mean_carbon={mc:.2f} mean_latency={ml:.2f} reroute%={rr:.2f}")
+    print("...")
+    for h, mc, ml, rr in rows[-3:]:
+        print(f"h={h:02d} mean_carbon={mc:.2f} mean_latency={ml:.2f} reroute%={rr:.2f}")
+
+    print("\nAvg reroute rate % over day:", round(sum(reroute_rates[1:]) / 23, 2))
+    print("Mean carbon (h=0..2):", [round(rows[i][1], 2) for i in range(3)])
+    print("Mean latency (h=0..2):", [round(rows[i][2], 2) for i in range(3)])
 
 
 
