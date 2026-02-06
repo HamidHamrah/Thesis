@@ -468,8 +468,9 @@ def run_step7_baseline_only(cfg: RunConfig, g: nx.Graph, ci: SyntheticCIProvider
         carb_vals = []
         lat_vals = []
         for (s, d), p in paths.items():
-            carb_vals.append(path_carbon(g, ci, p, hour=h))
-            lat_vals.append(path_latency(g, p))
+            cost = compute_path_cost(g, ci, p, hour=h)
+            carb_vals.append(cost.carbon)
+            lat_vals.append(cost.latency_ms)
 
         mean_c = sum(carb_vals) / len(carb_vals)
         mean_l = sum(lat_vals) / len(lat_vals)
