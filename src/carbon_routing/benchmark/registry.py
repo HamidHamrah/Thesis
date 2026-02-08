@@ -10,7 +10,20 @@ from .all_runner import Pair, Paths, AlgoRunner
 
 
 # Import your existing algorithm modules:
-from ..algorithms.baseline_latency import run_baseline_latency
+try:
+    from ..algorithms.baseline_latency import run_baseline_latency
+except ImportError:
+    # Fallback if the wrapper isn't available in the module for any reason.
+    from ..algorithms.baseline_latency import BaselineLatency
+    from ..algorithms.base import AlgoContext
+
+    def run_baseline_latency(g: nx.Graph, pairs: List[Pair]) -> Paths:
+        ctx = AlgoContext(k_paths=8)
+        algo = BaselineLatency()
+        out: Paths = {}
+        for src, dst in pairs:
+            out[(src, dst)] = list(algo.select_path(g, None, src, dst, 0, ctx))
+        return out
 from ..algorithms.ciro_core import run_ciro_core
 from ..algorithms.lowcarb_bgp import run_lowcarb_bgp
 from ..algorithms.ospf_metrics import run_ospf, run_c, run_c_incd

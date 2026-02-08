@@ -79,12 +79,14 @@ def _dir_load_from_unit_pairs(paths: Paths) -> Dict[Tuple[int, int], float]:
     return load
 
 
-@dataclass(frozen=True)
+@dataclass
 class BenchmarkResult:
     hour0: List[AlgoHourStats]
     day: List[AlgoDayStats]
     hour0_vs_base: List[dict]
     day_vs_base: List[dict]
+    hour0_paths_by_name: Dict[str, Paths] = None
+    day_paths_by_name: Dict[str, List[Paths]] = None
 
 
 def run_all(
@@ -134,6 +136,7 @@ def run_all(
     # ---------- 24h stats ----------
     day_stats: List[AlgoDayStats] = []
     day_vs_base: List[dict] = []
+    day_paths_by_name: Dict[str, List[Paths]] = {}
 
     # First compute baseline day to compare
     if baseline_name is None:
@@ -146,9 +149,11 @@ def run_all(
     lat_series = []
     hops_series = []
     rr_series = []
+    baseline_paths_by_hour = []
 
     for h in range(hours):
         cur = baseline_runner.run_hour(h)
+        baseline_paths_by_hour.append(cur)
         st = _paths_stats(g, ci, cur, hour=h)
         carb_series.append(st.mean_carbon)
         lat_series.append(st.mean_latency_ms)
@@ -172,15 +177,19 @@ def run_all(
         lat_series = []
         hops_series = []
         rr_series = []
+        paths_by_hour = []
 
         for h in range(hours):
             cur = r.run_hour(h)
+            paths_by_hour.append(cur)
             st = _paths_stats(g, ci, cur, hour=h)
             carb_series.append(st.mean_carbon)
             lat_series.append(st.mean_latency_ms)
             hops_series.append(st.mean_hops)
             rr_series.append(_reroute_rate(prev, cur))
             prev = cur
+
+        day_paths_by_name[r.name] = paths_by_hour
 
         d = AlgoDayStats(
             name=r.name,
@@ -206,4 +215,6 @@ def run_all(
         day=day_stats,
         hour0_vs_base=hour0_vs_base,
         day_vs_base=day_vs_base,
+        hour0_paths_by_name=hour0_paths_by_name,
+        day_paths_by_name=day_paths_by_name,
     )

@@ -31,6 +31,7 @@ from .benchmark.registry import (
 )
 from carbon_routing.metrics.emissions_proxy import mean_emissions_proxy_for_paths
 import random
+from carbon_routing.metrics.emissions_proxy import mean_emissions_proxy_for_paths
 
 
 
@@ -534,6 +535,74 @@ def run_step7_baseline_only(cfg: RunConfig, g: nx.Graph, ci: SyntheticCIProvider
 
     resB = run_all(g=g, ci=ci, pairs=pairs, runners=runners_B, hours=24)
     _print_step13_tables("=== Step 13B Results ===", resB)
+    # ----------------------------------------------------------------------------
+    
+    # Get actual paths and create traffic that matches their length
+    paths_ospf_t0 = resB.hour0_paths_by_name["OSPF"]
+    actual_pairs = list(paths_ospf_t0.keys())
+    
+    # Create traffic with matching length
+    rng = random.Random(7)
+    traffic = [rng.uniform(0.5, 1.5) for _ in actual_pairs]  # stable
+
+    # Create incd_lambda_by_node from router_params
+    incd_lambda_by_node = {node: router_params[node].incd_w_per_mbps for node in router_params}
+
+    ci_t0 = {n: ci.get_ci(n, 0) for n in g.nodes}
+    
+    # snaity check
+    # Sanity: emissions must differ if paths differ
+    # Get the 3rd pair from the paths dictionary
+    paths_os = resB.hour0_paths_by_name["OSPF"]
+    paths_c = resB.hour0_paths_by_name["C"]
+    third_pair = list(paths_os.keys())[2] if len(paths_os) > 2 else None
+    
+    if third_pair is not None:
+        p_os = paths_os[third_pair]
+        p_c = paths_c[third_pair]
+        if p_os != p_c:
+            # Find index of third pair in actual_pairs
+            third_idx = actual_pairs.index(third_pair)
+            e_os = mean_emissions_proxy_for_paths([p_os], ci_t0, [traffic[third_idx]], incd_lambda_by_node)
+            e_c  = mean_emissions_proxy_for_paths([p_c ], ci_t0, [traffic[third_idx]], incd_lambda_by_node)
+            print(f"[DEBUG] single-pair emissions OSPF={e_os:.6f} C={e_c:.6f} (should differ)")
+
+    print("\n=== Step 13B.1: Emissions proxy columns (paper metric) ===")
+
+    ospf_paths_list_t0 = ordered_path_list(resB.hour0_paths_by_name["OSPF"], actual_pairs)
+    e_ospf_0 = mean_emissions_proxy_for_paths(ospf_paths_list_t0, ci_t0, traffic, incd_lambda_by_node)
+
+    for name, paths_by_pair in resB.hour0_paths_by_name.items():
+        paths_list = ordered_path_list(paths_by_pair, actual_pairs)
+        e0 = mean_emissions_proxy_for_paths(paths_list, ci_t0, traffic, incd_lambda_by_node)
+        dE = 100.0 * (e_ospf_0 - e0) / max(e_ospf_0, 1e-9)
+        print(f"{name:10s} em0={e0:.2f} ΔE0%={dE:.2f}")
+    e_ospf_sum = 0.0
+    e_by_algo_sum = {name: 0.0 for name in resB.day_paths_by_name.keys()}
+
+    for t in range(24):
+        ci_tt = {n: ci.get_ci(n, t) for n in g.nodes}
+
+        ospf_paths_list = ordered_path_list(resB.day_paths_by_name["OSPF"][t], actual_pairs)
+        e_ospf_sum += mean_emissions_proxy_for_paths(ospf_paths_list, ci_tt, traffic, incd_lambda_by_node)
+
+        for name in e_by_algo_sum:
+            paths_list = ordered_path_list(resB.day_paths_by_name[name][t], actual_pairs)
+            e_by_algo_sum[name] += mean_emissions_proxy_for_paths(paths_list, ci_tt, traffic, incd_lambda_by_node)
+
+    e_ospf_24 = e_ospf_sum / 24.0
+    for name, s in e_by_algo_sum.items():
+        e24 = s / 24.0
+        dE24 = 100.0 * (e_ospf_24 - e24) / max(e_ospf_24, 1e-9)
+        print(f"{name:10s} em24={e24:.2f} ΔE24%={dE24:.2f}")
+    print("[DEBUG13B1]", name, "p2:", paths_list[2])
+    print("[DEBUG13B1] p2 OSPF:", ospf_paths_list_t0[2])
+    print("[DEBUG13B1] p2 C   :", ordered_path_list(resB.hour0_paths_by_name["C"], actual_pairs)[2])
+
+
+
+def ordered_path_list(paths_by_pair: dict, pair_order: list):
+    return [paths_by_pair[pair] for pair in pair_order]
 
 
 def _print_step13_tables(title: str, res) -> None:

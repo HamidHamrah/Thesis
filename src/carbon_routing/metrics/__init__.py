@@ -1,1 +1,2 @@
 from .paper_emissions import compute_paper_emissions_cost, PaperEmissionCost
+from .emissions_proxy import mean_emissions_proxy_for_paths
