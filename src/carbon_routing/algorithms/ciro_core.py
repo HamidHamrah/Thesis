@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Sequence
+from typing import Sequence, Dict, List, Tuple, Any
 
 import networkx as nx
 
@@ -7,6 +7,9 @@ from .base import RoutingAlgorithm, AlgoContext
 from ..ci.base import CIProvider
 from ..routing.candidates import k_shortest_paths_latency
 from ..metrics.path_cost import compute_path_cost
+
+Pair = Tuple[int, int]
+Paths = Dict[Pair, List[int]]
 
 class CIRoCore(RoutingAlgorithm):
     """
@@ -63,3 +66,29 @@ class CIRoCore(RoutingAlgorithm):
                 best_path = p
 
         return best_path
+
+
+def run_ciro_core(
+    g: nx.Graph,
+    ci: CIProvider,
+    router_params: Any,
+    pairs: List[Pair],
+    hour: int = 0,
+    horizon: int = 6,
+) -> Paths:
+    """
+    Wrapper function for CIRo-Core algorithm.
+    """
+    ctx = AlgoContext(
+        k_paths=8,
+        forecast_window_hours=horizon,
+        g=g,
+        ci=ci,
+        router_params=router_params,
+    )
+    algo = CIRoCore()
+    result: Paths = {}
+    for src, dst in pairs:
+        path = algo.select_path(g, ci, src, dst, hour, ctx)
+        result[(src, dst)] = list(path)
+    return result

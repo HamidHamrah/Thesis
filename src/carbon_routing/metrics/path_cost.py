@@ -24,6 +24,10 @@ def path_latency_ms(g: nx.Graph, path: Sequence[int]) -> float:
         total += float(g.edges[u, v].get("latency_ms", 0.0))
     return total
 
+def path_latency(g: nx.Graph, path: Sequence[int]) -> float:
+    """Compatibility alias for older callers."""
+    return path_latency_ms(g, path)
+
 def path_carbon_cost(ci: CIProvider, path: Sequence[int], hour: int) -> float:
     """
     Carbon cost proxy (Step 2):
@@ -33,6 +37,10 @@ def path_carbon_cost(ci: CIProvider, path: Sequence[int], hour: int) -> float:
     actual emissions per bit by multiplying by energy-per-bit.
     """
     return float(sum(ci.get_ci(asn, hour) for asn in path))
+
+def path_carbon(g: nx.Graph, ci: CIProvider, path: Sequence[int], hour: int) -> float:
+    """Compatibility alias for older callers (g unused)."""
+    return path_carbon_cost(ci, path, hour)
 
 def compute_path_cost(g: nx.Graph, ci: CIProvider, path: Sequence[int], hour: int) -> PathCost:
     carbon = path_carbon_cost(ci, path, hour)

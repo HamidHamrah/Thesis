@@ -24,6 +24,14 @@ from .algorithms.cate import run_cate
 from .benchmark.cate_time_runner import run_cate_over_day
 from .algorithms.ce import run_ce
 from .metrics.utilization import compute_link_utilization
+from .benchmark.all_runner import run_all
+from .benchmark.registry import (
+    BaselineRunner, CiroCoreRunner, LowCarbBGPRunner,
+    OspfRunner, CRunner, CIncDRunner, CERunner
+)
+from carbon_routing.metrics.emissions_proxy import mean_emissions_proxy_for_paths
+import random
+
 
 
 
@@ -499,11 +507,57 @@ def run_step7_baseline_only(cfg: RunConfig, g: nx.Graph, ci: SyntheticCIProvider
     print("Mean carbon (h=0..2):", [round(rows[i][1], 2) for i in range(3)])
     print("Mean latency (h=0..2):", [round(rows[i][2], 2) for i in range(3)])
 
-
-
-
-
+    # ----------------------------------------------------------------------------
+    # Step 13 Split: Implement 13A
+    # ----------------------------------------------------------------------------
     
+    print("\n=== Step 13A: Unified tables (Inter-domain family) ===")
+
+    runners_A = [
+        BaselineRunner(name="baseline_latency", g=g, pairs=pairs),
+        CiroCoreRunner(name="ciro_core", g=g, ci=ci, router_params=router_params, pairs=pairs),
+        LowCarbBGPRunner(name="lowcarb_bgp", g=g, ci=ci, router_params=router_params, pairs=pairs),
+    ]
+
+    resA = run_all(g=g, ci=ci, pairs=pairs, runners=runners_A, hours=24)
+    _print_step13_tables("=== Step 13A Results ===", resA)
+
+
+    print("\n=== Step 13B: Unified tables (OSPF-metric family) ===")
+
+    runners_B = [
+        OspfRunner(name="OSPF", g=g, ci=ci, router_params=router_params, pairs=pairs),
+        CRunner(name="C", g=g, ci=ci, router_params=router_params, pairs=pairs),
+        CIncDRunner(name="C+IncD", g=g, ci=ci, router_params=router_params, pairs=pairs),
+        CERunner(name="CE", g=g, ci=ci, router_params=router_params, pairs=pairs, gamma=1.0),
+    ]
+
+    resB = run_all(g=g, ci=ci, pairs=pairs, runners=runners_B, hours=24)
+    _print_step13_tables("=== Step 13B Results ===", resB)
+
+
+def _print_step13_tables(title: str, res) -> None:
+    print(f"\n{title}\n")
+
+    print("Hour-0 summary:")
+    for row in res.hour0_vs_base:
+        print(
+            f"{row['name']:12s} carbon={row['mean_carbon']:.2f} "
+            f"lat={row['mean_latency_ms']:.2f} hops={row['mean_hops']:.2f} "
+            f"ΔC%={row['mean_carbon_reduction_vs_base(%)']:.2f} "
+            f"ΔL%={row['mean_latency_increase_vs_base(%)']:.2f} "
+            f"chg%={row['pct_paths_changed_vs_base(%)']:.2f}"
+        )
+
+    print("\n24h summary:")
+    for row in res.day_vs_base:
+        print(
+            f"{row['name']:12s} carbon24={row['mean_carbon_24h']:.2f} "
+            f"lat24={row['mean_latency_24h']:.2f} hops24={row['mean_hops_24h']:.2f} "
+            f"reroute%={row['avg_reroute_rate_pct']:.2f} "
+            f"ΔC24%={row['carbon_reduction_vs_base_24h(%)']:.2f} "
+            f"ΔL24%={row['latency_increase_vs_base_24h(%)']:.2f}"
+        )
 
 def main() -> None:
     cfg = RunConfig()

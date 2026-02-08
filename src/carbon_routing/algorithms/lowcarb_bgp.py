@@ -1,11 +1,14 @@
 from __future__ import annotations
-from typing import Sequence, List, Tuple
+from typing import Sequence, List, Tuple, Dict, Any
 
 import networkx as nx
 
 from .base import RoutingAlgorithm, AlgoContext
 from ..ci.base import CIProvider
 from ..routing.candidates import k_shortest_paths_latency, path_latency_ms
+
+Pair = Tuple[int, int]
+Paths = Dict[Pair, List[int]]
 
 class LowCarbBGP(RoutingAlgorithm):
     """
@@ -57,3 +60,25 @@ class LowCarbBGP(RoutingAlgorithm):
 
         scored.sort(key=lambda x: (x[0], x[1], x[2]))
         return scored[0][3]
+
+
+def run_lowcarb_bgp(
+    g: nx.Graph,
+    ci: CIProvider,
+    router_params: Any,
+    pairs: List[Pair],
+    hour: int = 0,
+    k: int = 8,
+    alpha: float = 0.7,
+    latency_bound: float = 1.15,
+) -> Paths:
+    """
+    Wrapper function for Low-Carb BGP algorithm.
+    """
+    ctx = AlgoContext(k_paths=k, alpha=alpha, stretch=latency_bound)
+    algo = LowCarbBGP()
+    result: Paths = {}
+    for src, dst in pairs:
+        path = algo.select_path(g, ci, src, dst, hour, ctx)
+        result[(src, dst)] = list(path)
+    return result

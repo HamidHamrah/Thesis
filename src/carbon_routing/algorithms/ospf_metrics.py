@@ -1,12 +1,15 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Callable, Sequence, Dict, List, Tuple, Any
 
 import networkx as nx
 
 from .base import RoutingAlgorithm, AlgoContext
 from ..ci.base import CIProvider
 from ..device.models import RouterParams
+
+Pair = Tuple[int, int]
+Paths = Dict[Pair, List[int]]
 
 OSPF_MIN = 1
 OSPF_MAX = 65535  # 16-bit; 0 forbidden :contentReference[oaicite:7]{index=7}
@@ -100,3 +103,66 @@ def build_table1_metric_specs(
         "C+IncD":    MetricSpec("C+IncD", C_IncD),
         "CE":        MetricSpec("CE", CE),
     }
+
+
+def run_ospf(
+    g: nx.Graph,
+    ci: CIProvider,
+    router_params: Any,
+    pairs: List[Pair],
+    hour: int = 0,
+) -> Paths:
+    """
+    Wrapper function for OSPF routing.
+    Uses the basic OSPF metric (1 for all links).
+    """
+    spec = MetricSpec("OSPF", lambda i, j, h: 1.0)
+    algo = OspfMetricRouting(spec)
+    result: Paths = {}
+    ctx = AlgoContext(g=g, ci=ci, router_params=router_params)
+    for src, dst in pairs:
+        path = algo.select_path(g, ci, src, dst, hour, ctx)
+        result[(src, dst)] = list(path)
+    return result
+
+
+def run_c(
+    g: nx.Graph,
+    ci: CIProvider,
+    router_params: Any,
+    pairs: List[Pair],
+    hour: int = 0,
+) -> Paths:
+    """
+    Wrapper function for C (Carbon-aware) routing.
+    Uses the C metric: 1 + CI(j, h) for receiver j.
+    """
+    spec = MetricSpec("C", lambda i, j, h: 1.0 + ci.get_ci(j, h))
+    algo = OspfMetricRouting(spec)
+    result: Paths = {}
+    ctx = AlgoContext(g=g, ci=ci, router_params=router_params)
+    for src, dst in pairs:
+        path = algo.select_path(g, ci, src, dst, hour, ctx)
+        result[(src, dst)] = list(path)
+    return result
+
+
+def run_c_incd(
+    g: nx.Graph,
+    ci: CIProvider,
+    router_params: Any,
+    pairs: List[Pair],
+    hour: int = 0,
+) -> Paths:
+    """
+    Wrapper function for C+IncD routing.
+    Uses the C+IncD metric: 1 + incd_w_per_mbps * CI(j, h) for receiver j.
+    """
+    spec = MetricSpec("C+IncD", lambda i, j, h: 1.0 + router_params[j].incd_w_per_mbps * ci.get_ci(j, h))
+    algo = OspfMetricRouting(spec)
+    result: Paths = {}
+    ctx = AlgoContext(g=g, ci=ci, router_params=router_params)
+    for src, dst in pairs:
+        path = algo.select_path(g, ci, src, dst, hour, ctx)
+        result[(src, dst)] = list(path)
+    return result

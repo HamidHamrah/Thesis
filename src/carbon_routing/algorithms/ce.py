@@ -1,12 +1,14 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Dict, Tuple, Optional, Sequence
+from typing import Dict, Tuple, Optional, Sequence, List, Any
 
 import networkx as nx
 
 from .base import AlgoContext, AlgorithmResult
 from ..metrics.utilization import ce_penalty
 
+Pair = Tuple[int, int]
+Paths = Dict[Pair, List[int]]
 
 @dataclass(frozen=True)
 class CERouteDecision:
@@ -80,3 +82,22 @@ def run_ce(
         chosen_paths[(s, d)] = list(p)
 
     return AlgorithmResult(name=f"CE(gamma={gamma})", paths=chosen_paths)
+
+
+def run_ce_wrapper(
+    g: nx.Graph,
+    ci: Any,
+    router_params: Any,
+    pairs: List[Pair],
+    hour: int = 0,
+    prev_util_undir: Optional[Dict[Tuple[int, int], float]] = None,
+    gamma: float = 1.0,
+) -> AlgorithmResult:
+    """
+    Wrapper function for CE algorithm that matches the registry interface.
+    """
+    if prev_util_undir is None:
+        prev_util_undir = {}
+    
+    ctx = AlgoContext(g=g, ci=ci, router_params=router_params)
+    return run_ce(ctx, pairs, hour, prev_util_undir, gamma)
