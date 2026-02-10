@@ -32,7 +32,19 @@ from .benchmark.registry import (
 from carbon_routing.metrics.emissions_proxy import mean_emissions_proxy_for_paths
 import random
 from carbon_routing.metrics.emissions_proxy import mean_emissions_proxy_for_paths
+from pathlib import Path
+import csv
+from datetime import datetime
 
+
+def _unified_summary_fields(s):
+    mean_c = getattr(s, "mean_carbon", getattr(s, "mean_carbon_24h", 0.0))
+    mean_l = getattr(s, "mean_latency_ms", getattr(s, "mean_latency_24h", 0.0))
+    mean_h = getattr(s, "mean_hops", getattr(s, "mean_hops_24h", 0.0))
+    delta_c = getattr(s, "mean_carbon_reduction_pct_vs_base", getattr(s, "mean_carbon_reduction_vs_base", getattr(s, "carbon_reduction_vs_base_24h", 0.0)))
+    delta_l = getattr(s, "mean_latency_increase_pct_vs_base", getattr(s, "mean_latency_increase_vs_base", getattr(s, "latency_increase_vs_base_24h", 0.0)))
+    pct_changed = getattr(s, "pct_paths_changed_vs_base", getattr(s, "pct_paths_changed_vs_base", getattr(s, "avg_reroute_rate_pct", 0.0)))
+    return mean_c, mean_l, mean_h, delta_c, delta_l, pct_changed
 
 
 
@@ -131,13 +143,14 @@ def run_step7_baseline_only(cfg: RunConfig, g: nx.Graph, ci: SyntheticCIProvider
     )
 
     for name, s in summaries.items():
+        mean_c, mean_l, mean_h, delta_c, delta_l, pct_changed = _unified_summary_fields(s)
         print(f"\nAlgorithm: {name}")
-        print(f"  mean_carbon: {s.mean_carbon:.2f}")
-        print(f"  mean_latency_ms: {s.mean_latency_ms:.2f}")
-        print(f"  mean_hops: {s.mean_hops:.2f}")
-        print(f"  mean_carbon_reduction_vs_base(%): {s.mean_carbon_reduction_pct_vs_base:.2f}")
-        print(f"  mean_latency_increase_vs_base(%): {s.mean_latency_increase_pct_vs_base:.2f}")
-        print(f"  pct_paths_changed_vs_base(%): {s.pct_paths_changed_vs_base:.2f}")
+        print(f"  mean_carbon: {mean_c:.2f}")
+        print(f"  mean_latency_ms: {mean_l:.2f}")
+        print(f"  mean_hops: {mean_h:.2f}")
+        print(f"  mean_carbon_reduction_vs_base(%): {delta_c:.2f}")
+        print(f"  mean_latency_increase_vs_base(%): {delta_l:.2f}")
+        print(f"  pct_paths_changed_vs_base(%): {pct_changed:.2f}")
 
     # Time-series check (24h)
     ts = run_time_benchmark(
@@ -177,13 +190,14 @@ def run_step7_baseline_only(cfg: RunConfig, g: nx.Graph, ci: SyntheticCIProvider
     )
 
     for name, s in summaries.items():
+        mean_c, mean_l, mean_h, delta_c, delta_l, pct_changed = _unified_summary_fields(s)
         print(f"\nAlgorithm: {name}")
-        print(f"  mean_carbon: {s.mean_carbon:.2f}")
-        print(f"  mean_latency_ms: {s.mean_latency_ms:.2f}")
-        print(f"  mean_hops: {s.mean_hops:.2f}")
-        print(f"  mean_carbon_reduction_vs_base(%): {s.mean_carbon_reduction_pct_vs_base:.2f}")
-        print(f"  mean_latency_increase_vs_base(%): {s.mean_latency_increase_pct_vs_base:.2f}")
-        print(f"  pct_paths_changed_vs_base(%): {s.pct_paths_changed_vs_base:.2f}")
+        print(f"  mean_carbon: {mean_c:.2f}")
+        print(f"  mean_latency_ms: {mean_l:.2f}")
+        print(f"  mean_hops: {mean_h:.2f}")
+        print(f"  mean_carbon_reduction_vs_base(%): {delta_c:.2f}")
+        print(f"  mean_latency_increase_vs_base(%): {delta_l:.2f}")
+        print(f"  pct_paths_changed_vs_base(%): {pct_changed:.2f}")
 
     ts = run_time_benchmark(
         g=g,
@@ -222,13 +236,14 @@ def run_step7_baseline_only(cfg: RunConfig, g: nx.Graph, ci: SyntheticCIProvider
     )
 
     for name, s in summaries.items():
+        mean_c, mean_l, mean_h, delta_c, delta_l, pct_changed = _unified_summary_fields(s)
         print(f"\nAlgorithm: {name}")
-        print(f"  mean_carbon: {s.mean_carbon:.2f}")
-        print(f"  mean_latency_ms: {s.mean_latency_ms:.2f}")
-        print(f"  mean_hops: {s.mean_hops:.2f}")
-        print(f"  mean_carbon_reduction_vs_base(%): {s.mean_carbon_reduction_pct_vs_base:.2f}")
-        print(f"  mean_latency_increase_vs_base(%): {s.mean_latency_increase_pct_vs_base:.2f}")
-        print(f"  pct_paths_changed_vs_base(%): {s.pct_paths_changed_vs_base:.2f}")
+        print(f"  mean_carbon: {mean_c:.2f}")
+        print(f"  mean_latency_ms: {mean_l:.2f}")
+        print(f"  mean_hops: {mean_h:.2f}")
+        print(f"  mean_carbon_reduction_vs_base(%): {delta_c:.2f}")
+        print(f"  mean_latency_increase_vs_base(%): {delta_l:.2f}")
+        print(f"  pct_paths_changed_vs_base(%): {pct_changed:.2f}")
 
     ts = run_time_benchmark(
         g=g,
@@ -507,11 +522,12 @@ def run_step7_baseline_only(cfg: RunConfig, g: nx.Graph, ci: SyntheticCIProvider
     print("\nAvg reroute rate % over day:", round(sum(reroute_rates[1:]) / 23, 2))
     print("Mean carbon (h=0..2):", [round(rows[i][1], 2) for i in range(3)])
     print("Mean latency (h=0..2):", [round(rows[i][2], 2) for i in range(3)])
+# ----------------------------------------------------------------------------
+# Step 13 Split: 13A (Inter-domain family) + 13B (OSPF-metric family)
+# Step 13B.1: emissions proxy columns for OSPF-family
+# Step 14A: export CSVs (one results_dir for both)
+# ----------------------------------------------------------------------------
 
-    # ----------------------------------------------------------------------------
-    # Step 13 Split: Implement 13A
-    # ----------------------------------------------------------------------------
-    
     print("\n=== Step 13A: Unified tables (Inter-domain family) ===")
 
     runners_A = [
@@ -522,7 +538,6 @@ def run_step7_baseline_only(cfg: RunConfig, g: nx.Graph, ci: SyntheticCIProvider
 
     resA = run_all(g=g, ci=ci, pairs=pairs, runners=runners_A, hours=24)
     _print_step13_tables("=== Step 13A Results ===", resA)
-
 
     print("\n=== Step 13B: Unified tables (OSPF-metric family) ===")
 
@@ -535,39 +550,93 @@ def run_step7_baseline_only(cfg: RunConfig, g: nx.Graph, ci: SyntheticCIProvider
 
     resB = run_all(g=g, ci=ci, pairs=pairs, runners=runners_B, hours=24)
     _print_step13_tables("=== Step 13B Results ===", resB)
-    # ----------------------------------------------------------------------------
-    
-    # Get actual paths and create traffic that matches their length
-    paths_ospf_t0 = resB.hour0_paths_by_name["OSPF"]
-    actual_pairs = list(paths_ospf_t0.keys())
-    
-    # Create traffic with matching length
-    rng = random.Random(7)
-    traffic = [rng.uniform(0.5, 1.5) for _ in actual_pairs]  # stable
 
-    # Create incd_lambda_by_node from router_params
+    # ----------------------------------------------------------------------------
+    # Step 14A: Export CSVs (create dir ONCE, before writes)
+    # ----------------------------------------------------------------------------
+    outdir = make_run_dir()
+    print(f"\n=== Step 14A: Export CSVs ===\nresults_dir: {outdir.resolve()}")
+
+    # Base CSV fields (edit if you already defined these elsewhere)
+    base_fields = [
+        "scope", "algo",
+        "carbon", "latency_ms", "hops",
+        "reroute_pct",
+        "deltaC_pct", "deltaL_pct",
+        "changed_pct",
+    ]
+    b1_extra = ["emissions_proxy", "deltaE_pct"]  # extra columns for 13B.1
+
+    # ----------------------------------------------------------------------------
+    # Write Step 13A CSV (Inter-domain family)
+    # ----------------------------------------------------------------------------
+    rows13A = []
+
+    # hour-0 rows
+    for algo, s in resA.hour0_summary.items():
+        rows13A.append({
+            "scope": "hour0",
+            "algo": algo,
+            "carbon": s.mean_carbon,
+            "latency_ms": s.mean_latency_ms,
+            "hops": s.mean_hops,
+            "reroute_pct": 0.0,
+            "deltaC_pct": s.mean_carbon_reduction_vs_base,
+            "deltaL_pct": s.mean_latency_increase_vs_base,
+            "changed_pct": s.pct_paths_changed_vs_base,
+        })
+
+    # 24h rows
+    for algo, s in resA.day_summary.items():
+        rows13A.append({
+            "scope": "mean24h",
+            "algo": algo,
+            "carbon": s.mean_carbon_24h,
+            "latency_ms": s.mean_latency_24h,
+            "hops": s.mean_hops_24h,
+            "reroute_pct": s.avg_reroute_rate_pct,
+            "deltaC_pct": s.carbon_reduction_vs_base_24h,
+            "deltaL_pct": s.latency_increase_vs_base_24h,
+            "changed_pct": 0.0,
+        })
+
+    write_csv(outdir / "step13A_interdomain.csv", rows13A, base_fields)
+    print("wrote:", (outdir / "step13A_interdomain.csv").resolve())
+
+    # ----------------------------------------------------------------------------
+    # Step 13B.1: Emissions proxy columns (paper metric) for OSPF family
+    # ----------------------------------------------------------------------------
+    print("\n=== Step 13B.1: Emissions proxy columns (paper metric) ===")
+
+    # Use OSPF pair order as canonical order for emissions computation
+    paths_ospf_t0 = resB.hour0_paths_by_name["OSPF"]      # dict: pair -> path
+    actual_pairs = list(paths_ospf_t0.keys())            # stable order for this run
+
+    # Deterministic traffic, aligned 1:1 with actual_pairs
+    rng = random.Random(7)
+    traffic = [rng.uniform(0.5, 1.5) for _ in actual_pairs]
+
+    # Build per-node IncD lambda (utilization proxy)
     incd_lambda_by_node = {node: router_params[node].incd_w_per_mbps for node in router_params}
 
+    # Hour-0 CI map
     ci_t0 = {n: ci.get_ci(n, 0) for n in g.nodes}
-    
-    # snaity check
-    # Sanity: emissions must differ if paths differ
-    # Get the 3rd pair from the paths dictionary
+
+    # Optional sanity check (safe + deterministic)
     paths_os = resB.hour0_paths_by_name["OSPF"]
-    paths_c = resB.hour0_paths_by_name["C"]
-    third_pair = list(paths_os.keys())[2] if len(paths_os) > 2 else None
-    
-    if third_pair is not None:
+    paths_c  = resB.hour0_paths_by_name["C"]
+    if len(actual_pairs) > 2:
+        third_pair = actual_pairs[2]
         p_os = paths_os[third_pair]
-        p_c = paths_c[third_pair]
+        p_c  = paths_c[third_pair]
         if p_os != p_c:
-            # Find index of third pair in actual_pairs
-            third_idx = actual_pairs.index(third_pair)
+            third_idx = 2
             e_os = mean_emissions_proxy_for_paths([p_os], ci_t0, [traffic[third_idx]], incd_lambda_by_node)
             e_c  = mean_emissions_proxy_for_paths([p_c ], ci_t0, [traffic[third_idx]], incd_lambda_by_node)
             print(f"[DEBUG] single-pair emissions OSPF={e_os:.6f} C={e_c:.6f} (should differ)")
 
-    print("\n=== Step 13B.1: Emissions proxy columns (paper metric) ===")
+    # Compute hour-0 emissions per algo (and deltas vs OSPF)
+    em0_by_algo, de0_by_algo = {}, {}
 
     ospf_paths_list_t0 = ordered_path_list(resB.hour0_paths_by_name["OSPF"], actual_pairs)
     e_ospf_0 = mean_emissions_proxy_for_paths(ospf_paths_list_t0, ci_t0, traffic, incd_lambda_by_node)
@@ -576,7 +645,14 @@ def run_step7_baseline_only(cfg: RunConfig, g: nx.Graph, ci: SyntheticCIProvider
         paths_list = ordered_path_list(paths_by_pair, actual_pairs)
         e0 = mean_emissions_proxy_for_paths(paths_list, ci_t0, traffic, incd_lambda_by_node)
         dE = 100.0 * (e_ospf_0 - e0) / max(e_ospf_0, 1e-9)
+
+        em0_by_algo[name] = e0
+        de0_by_algo[name] = dE
         print(f"{name:10s} em0={e0:.2f} ΔE0%={dE:.2f}")
+
+    # Compute 24h emissions per algo (mean over day) and deltas vs OSPF
+    em24_by_algo, de24_by_algo = {}, {}
+
     e_ospf_sum = 0.0
     e_by_algo_sum = {name: 0.0 for name in resB.day_paths_by_name.keys()}
 
@@ -591,13 +667,63 @@ def run_step7_baseline_only(cfg: RunConfig, g: nx.Graph, ci: SyntheticCIProvider
             e_by_algo_sum[name] += mean_emissions_proxy_for_paths(paths_list, ci_tt, traffic, incd_lambda_by_node)
 
     e_ospf_24 = e_ospf_sum / 24.0
-    for name, s in e_by_algo_sum.items():
-        e24 = s / 24.0
+    for name, ssum in e_by_algo_sum.items():
+        e24 = ssum / 24.0
         dE24 = 100.0 * (e_ospf_24 - e24) / max(e_ospf_24, 1e-9)
+
+        em24_by_algo[name] = e24
+        de24_by_algo[name] = dE24
         print(f"{name:10s} em24={e24:.2f} ΔE24%={dE24:.2f}")
-    print("[DEBUG13B1]", name, "p2:", paths_list[2])
-    print("[DEBUG13B1] p2 OSPF:", ospf_paths_list_t0[2])
-    print("[DEBUG13B1] p2 C   :", ordered_path_list(resB.hour0_paths_by_name["C"], actual_pairs)[2])
+
+    # (optional) explicit debug path comparison, safe
+    if len(actual_pairs) > 2:
+        p2 = 2
+        ce_list = ordered_path_list(resB.hour0_paths_by_name["CE"], actual_pairs)
+        c_list  = ordered_path_list(resB.hour0_paths_by_name["C"], actual_pairs)
+        print("[DEBUG13B1] CE p2:", ce_list[p2])
+        print("[DEBUG13B1] p2 OSPF:", ospf_paths_list_t0[p2])
+        print("[DEBUG13B1] p2 C   :", c_list[p2])
+
+    # ----------------------------------------------------------------------------
+    # Write Step 13B CSV (OSPF family) INCLUDING emissions columns from 13B.1
+    # ----------------------------------------------------------------------------
+    rows13B = []
+
+    # hour0 rows
+    for algo, s in resB.hour0_summary.items():
+        rows13B.append({
+            "scope": "hour0",
+            "algo": algo,
+            "carbon": s.mean_carbon,
+            "latency_ms": s.mean_latency_ms,
+            "hops": s.mean_hops,
+            "reroute_pct": 0.0,
+            "deltaC_pct": s.mean_carbon_reduction_vs_base,
+            "deltaL_pct": s.mean_latency_increase_vs_base,
+            "changed_pct": s.pct_paths_changed_vs_base,
+            "emissions_proxy": em0_by_algo.get(algo),
+            "deltaE_pct": de0_by_algo.get(algo),
+        })
+
+    # 24h rows
+    for algo, s in resB.day_summary.items():
+        rows13B.append({
+            "scope": "mean24h",
+            "algo": algo,
+            "carbon": s.mean_carbon_24h,
+            "latency_ms": s.mean_latency_24h,
+            "hops": s.mean_hops_24h,
+            "reroute_pct": s.avg_reroute_rate_pct,
+            "deltaC_pct": s.carbon_reduction_vs_base_24h,
+            "deltaL_pct": s.latency_increase_vs_base_24h,
+            "changed_pct": 0.0,
+            "emissions_proxy": em24_by_algo.get(algo),
+            "deltaE_pct": de24_by_algo.get(algo),
+        })
+
+    write_csv(outdir / "step13B_ospf_family.csv", rows13B, base_fields + b1_extra)
+    print("wrote:", (outdir / "step13B_ospf_family.csv").resolve())
+
 
 
 
@@ -627,6 +753,18 @@ def _print_step13_tables(title: str, res) -> None:
             f"ΔC24%={row['carbon_reduction_vs_base_24h(%)']:.2f} "
             f"ΔL24%={row['latency_increase_vs_base_24h(%)']:.2f}"
         )
+def make_run_dir() -> Path:
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    outdir = Path("results") / run_id
+    outdir.mkdir(parents=True, exist_ok=True)
+    return outdir
+
+def write_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w.writeheader()
+        w.writerows(rows)
 
 def main() -> None:
     cfg = RunConfig()

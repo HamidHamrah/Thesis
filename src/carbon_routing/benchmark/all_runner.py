@@ -31,6 +31,28 @@ class AlgoDayStats:
     avg_reroute_rate_pct: float
 
 
+@dataclass(frozen=True)
+class Hour0Summary:
+    name: str
+    mean_carbon: float
+    mean_latency_ms: float
+    mean_hops: float
+    mean_carbon_reduction_vs_base: float
+    mean_latency_increase_vs_base: float
+    pct_paths_changed_vs_base: float
+
+
+@dataclass(frozen=True)
+class DaySummary:
+    name: str
+    mean_carbon_24h: float
+    mean_latency_24h: float
+    mean_hops_24h: float
+    avg_reroute_rate_pct: float
+    carbon_reduction_vs_base_24h: float
+    latency_increase_vs_base_24h: float
+
+
 class AlgoRunner(Protocol):
     """
     Minimal interface:
@@ -87,6 +109,8 @@ class BenchmarkResult:
     day_vs_base: List[dict]
     hour0_paths_by_name: Dict[str, Paths] = None
     day_paths_by_name: Dict[str, List[Paths]] = None
+    hour0_summary: Dict[str, Hour0Summary] = None
+    day_summary: Dict[str, DaySummary] = None
 
 
 def run_all(
@@ -118,25 +142,40 @@ def run_all(
 
 
     hour0_vs_base = []
+    hour0_summary_map: Dict[str, Hour0Summary] = {}
     for s in hour0_stats:
         paths = hour0_paths_by_name[s.name]
         changed = sum(1 for k in paths if paths[k] != base0_paths.get(k))
         pct_changed = 100.0 * changed / len(paths) if paths else 0.0
+
+        mean_carbon_reduction_vs_base = 100.0 * (base0.mean_carbon - s.mean_carbon) / base0.mean_carbon
+        mean_latency_increase_vs_base = 100.0 * (s.mean_latency_ms - base0.mean_latency_ms) / base0.mean_latency_ms
 
         hour0_vs_base.append({
             "name": s.name,
             "mean_carbon": s.mean_carbon,
             "mean_latency_ms": s.mean_latency_ms,
             "mean_hops": s.mean_hops,
-            "mean_carbon_reduction_vs_base(%)": 100.0 * (base0.mean_carbon - s.mean_carbon) / base0.mean_carbon,
-            "mean_latency_increase_vs_base(%)": 100.0 * (s.mean_latency_ms - base0.mean_latency_ms) / base0.mean_latency_ms,
+            "mean_carbon_reduction_vs_base(%)": mean_carbon_reduction_vs_base,
+            "mean_latency_increase_vs_base(%)": mean_latency_increase_vs_base,
             "pct_paths_changed_vs_base(%)": pct_changed,
         })
+
+        hour0_summary_map[s.name] = Hour0Summary(
+            name=s.name,
+            mean_carbon=s.mean_carbon,
+            mean_latency_ms=s.mean_latency_ms,
+            mean_hops=s.mean_hops,
+            mean_carbon_reduction_vs_base=mean_carbon_reduction_vs_base,
+            mean_latency_increase_vs_base=mean_latency_increase_vs_base,
+            pct_paths_changed_vs_base=pct_changed,
+        )
 
     # ---------- 24h stats ----------
     day_stats: List[AlgoDayStats] = []
     day_vs_base: List[dict] = []
     day_paths_by_name: Dict[str, List[Paths]] = {}
+    day_summary_map: Dict[str, DaySummary] = {}
 
     # First compute baseline day to compare
     if baseline_name is None:
@@ -200,15 +239,28 @@ def run_all(
         )
         day_stats.append(d)
 
+        carbon_reduction_vs_base_24h = 100.0 * (base_day.mean_carbon_24h - d.mean_carbon_24h) / base_day.mean_carbon_24h
+        latency_increase_vs_base_24h = 100.0 * (d.mean_latency_24h - base_day.mean_latency_24h) / base_day.mean_latency_24h
+
         day_vs_base.append({
             "name": d.name,
             "mean_carbon_24h": d.mean_carbon_24h,
             "mean_latency_24h": d.mean_latency_24h,
             "mean_hops_24h": d.mean_hops_24h,
             "avg_reroute_rate_pct": d.avg_reroute_rate_pct,
-            "carbon_reduction_vs_base_24h(%)": 100.0 * (base_day.mean_carbon_24h - d.mean_carbon_24h) / base_day.mean_carbon_24h,
-            "latency_increase_vs_base_24h(%)": 100.0 * (d.mean_latency_24h - base_day.mean_latency_24h) / base_day.mean_latency_24h,
+            "carbon_reduction_vs_base_24h(%)": carbon_reduction_vs_base_24h,
+            "latency_increase_vs_base_24h(%)": latency_increase_vs_base_24h,
         })
+
+        day_summary_map[d.name] = DaySummary(
+            name=d.name,
+            mean_carbon_24h=d.mean_carbon_24h,
+            mean_latency_24h=d.mean_latency_24h,
+            mean_hops_24h=d.mean_hops_24h,
+            avg_reroute_rate_pct=d.avg_reroute_rate_pct,
+            carbon_reduction_vs_base_24h=carbon_reduction_vs_base_24h,
+            latency_increase_vs_base_24h=latency_increase_vs_base_24h,
+        )
 
     return BenchmarkResult(
         hour0=hour0_stats,
@@ -217,4 +269,6 @@ def run_all(
         day_vs_base=day_vs_base,
         hour0_paths_by_name=hour0_paths_by_name,
         day_paths_by_name=day_paths_by_name,
+        hour0_summary=hour0_summary_map,
+        day_summary=day_summary_map,
     )
