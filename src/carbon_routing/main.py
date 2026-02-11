@@ -612,6 +612,9 @@ def run_step7_baseline_only(cfg: RunConfig, g: nx.Graph, ci: SyntheticCIProvider
     paths_ospf_t0 = resB.hour0_paths_by_name["OSPF"]      # dict: pair -> path
     actual_pairs = list(paths_ospf_t0.keys())            # stable order for this run
 
+    def ordered_path_list(paths_by_pair: dict, pair_order: list):
+        return [paths_by_pair[pair] for pair in pair_order]
+
     # Deterministic traffic, aligned 1:1 with actual_pairs
     rng = random.Random(7)
     traffic = [rng.uniform(0.5, 1.5) for _ in actual_pairs]
@@ -724,13 +727,149 @@ def run_step7_baseline_only(cfg: RunConfig, g: nx.Graph, ci: SyntheticCIProvider
     write_csv(outdir / "step13B_ospf_family.csv", rows13B, base_fields + b1_extra)
     print("wrote:", (outdir / "step13B_ospf_family.csv").resolve())
 
+    # ----------------------------------------------------------------------------
+    # Step 14B: Export plot-ready time-series CSVs (24h × algo)
+    # ----------------------------------------------------------------------------
+    print("\n=== Step 14B: Export time-series CSVs (plot-ready) ===")
+
+    def reroute_rate_pct(prev_paths_by_pair: dict, cur_paths_by_pair: dict) -> float:
+        """% of pairs whose path changed vs previous hour."""
+        keys = list(prev_paths_by_pair.keys())
+        if not keys:
+            return 0.0
+        changed = 0
+        for k in keys:
+            if prev_paths_by_pair.get(k) != cur_paths_by_pair.get(k):
+                changed += 1
+        return 100.0 * changed / len(keys)
+
+    def ordered_path_list(paths_by_pair: dict, pair_order: list):
+        """Convert dict[(s,d)->path] into list[path] using stable pair order."""
+        return [paths_by_pair[p] for p in pair_order]
+
+    def mean_carbon_latency_hops_for_hour(g, ci, paths_by_pair: dict, hour: int):
+        """
+        Returns (mean_carbon, mean_latency_ms, mean_hops) for a given hour, across all pairs.
+        Uses your existing per-path cost logic already used in Step 2/7/8/9/10.
+        """
+        ci_t = {n: ci.get_ci(n, hour) for n in g.nodes}
+
+        carb_sum = 0.0
+        lat_sum = 0.0
+        hop_sum = 0.0
+        npaths = 0
+
+        for _pair, path in paths_by_pair.items():
+            if not path or len(path) < 2:
+                continue
+            # Compute carbon + latency directly (avoid missing helper).
+            carbon = sum(ci_t[n] for n in path)
+            latency = 0.0
+            for u, v in zip(path[:-1], path[1:]):
+                latency += float(g.edges[u, v].get("latency_ms", 0.0))
+            hops = len(path) - 1
+
+            carb_sum += carbon
+            lat_sum += latency
+            hop_sum += hops
+            npaths += 1
+
+        if npaths == 0:
+            return 0.0, 0.0, 0.0
+        return carb_sum / npaths, lat_sum / npaths, hop_sum / npaths
 
 
+    # ---------- 14B.1: 13A Inter-domain time series ----------
+    A_pair_order = list(resA.day_paths_by_name["baseline_latency"][0].keys())
 
-def ordered_path_list(paths_by_pair: dict, pair_order: list):
-    return [paths_by_pair[pair] for pair in pair_order]
+    rowsA_ts = []
+    for algo in resA.day_paths_by_name.keys():
+        prev = None
+        for h in range(24):
+            paths_h = resA.day_paths_by_name[algo][h]
+
+            mean_c, mean_l, mean_hops = mean_carbon_latency_hops_for_hour(g, ci, paths_h, h)
+
+            # baseline for deltas = baseline_latency at same hour
+            base_paths_h = resA.day_paths_by_name["baseline_latency"][h]
+            base_c, base_l, _ = mean_carbon_latency_hops_for_hour(g, ci, base_paths_h, h)
+
+            dC = 100.0 * (base_c - mean_c) / max(base_c, 1e-9)
+            dL = 100.0 * (mean_l - base_l) / max(base_l, 1e-9)
+
+            rr = 0.0 if prev is None else reroute_rate_pct(prev, paths_h)
+
+            rowsA_ts.append({
+                "family": "interdomain",
+                "hour": h,
+                "algo": algo,
+                "carbon": mean_c,
+                "latency_ms": mean_l,
+                "hops": mean_hops,
+                "reroute_pct": rr,
+                "deltaC_pct": dC,
+                "deltaL_pct": dL,
+            })
+
+            prev = paths_h
+
+    write_csv(outdir / "step13A_interdomain_timeseries.csv", rowsA_ts,
+            fieldnames=["family","hour","algo","carbon","latency_ms","hops","reroute_pct","deltaC_pct","deltaL_pct"])
+    print("wrote:", (outdir / "step13A_interdomain_timeseries.csv").resolve())
 
 
+    # ---------- 14B.2: 13B OSPF-family time series (+ emissions proxy per hour) ----------
+    B_pair_order = list(resB.day_paths_by_name["OSPF"][0].keys())
+
+    # stable traffic vector aligned with B_pair_order
+    rng = random.Random(7)
+    traffic_B = [rng.uniform(0.5, 1.5) for _ in B_pair_order]
+
+    incd_lambda_by_node = {node: router_params[node].incd_w_per_mbps for node in router_params}
+
+    rowsB_ts = []
+    for algo in resB.day_paths_by_name.keys():
+        prev = None
+        for h in range(24):
+            paths_h_by_pair = resB.day_paths_by_name[algo][h]
+            ospf_h_by_pair  = resB.day_paths_by_name["OSPF"][h]
+
+            mean_c, mean_l, mean_hops = mean_carbon_latency_hops_for_hour(g, ci, paths_h_by_pair, h)
+            base_c, base_l, _ = mean_carbon_latency_hops_for_hour(g, ci, ospf_h_by_pair, h)
+
+            dC = 100.0 * (base_c - mean_c) / max(base_c, 1e-9)
+            dL = 100.0 * (mean_l - base_l) / max(base_l, 1e-9)
+
+            rr = 0.0 if prev is None else reroute_rate_pct(prev, paths_h_by_pair)
+
+            # emissions proxy: MUST use ordered lists aligned to traffic_B
+            ci_h = {n: ci.get_ci(n, h) for n in g.nodes}
+            paths_list_algo = ordered_path_list(paths_h_by_pair, B_pair_order)
+            paths_list_ospf = ordered_path_list(ospf_h_by_pair, B_pair_order)
+
+            e_algo = mean_emissions_proxy_for_paths(paths_list_algo, ci_h, traffic_B, incd_lambda_by_node)
+            e_ospf = mean_emissions_proxy_for_paths(paths_list_ospf, ci_h, traffic_B, incd_lambda_by_node)
+            dE = 100.0 * (e_ospf - e_algo) / max(e_ospf, 1e-9)
+
+            rowsB_ts.append({
+                "family": "ospf_metric",
+                "hour": h,
+                "algo": algo,
+                "carbon": mean_c,
+                "latency_ms": mean_l,
+                "hops": mean_hops,
+                "reroute_pct": rr,
+                "deltaC_pct": dC,
+                "deltaL_pct": dL,
+                "emissions_proxy": e_algo,
+                "deltaE_pct": dE,
+            })
+
+            prev = paths_h_by_pair
+
+    write_csv(outdir / "step13B_ospf_family_timeseries.csv", rowsB_ts,
+            fieldnames=["family","hour","algo","carbon","latency_ms","hops","reroute_pct","deltaC_pct","deltaL_pct","emissions_proxy","deltaE_pct"])
+    print("wrote:", (outdir / "step13B_ospf_family_timeseries.csv").resolve())
 def _print_step13_tables(title: str, res) -> None:
     print(f"\n{title}\n")
 
