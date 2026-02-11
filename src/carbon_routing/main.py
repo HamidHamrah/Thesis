@@ -35,6 +35,9 @@ from carbon_routing.metrics.emissions_proxy import mean_emissions_proxy_for_path
 from pathlib import Path
 import csv
 from datetime import datetime
+import matplotlib.pyplot as plt
+import pandas as pd
+from pathlib import Path
 
 
 def _unified_summary_fields(s):
@@ -910,6 +913,250 @@ def run_step7_baseline_only(cfg: RunConfig, g: nx.Graph, ci: SyntheticCIProvider
         ],
     )
     print("wrote:", (outdir / "step13B_ospf_family_timeseries.csv").resolve())
+# ----------------------------------------------------------------------------
+# Step 14C: Plot generation (PNG + PDF) from plot-ready CSVs
+# ----------------------------------------------------------------------------
+    run_step14C_plots(outdir)
+
+
+
+def _savefig(fig, outpath: Path) -> None:
+    outpath.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(outpath.with_suffix(".png"), dpi=300)
+    fig.savefig(outpath.with_suffix(".pdf"))
+    plt.close(fig)
+
+def _plot_timeseries(df: "pd.DataFrame",
+                     family_name: str,
+                     metric: str,
+                     ylabel: str,
+                     title: str,
+                     outpath: Path,
+                     algos_order: list[str] | None = None) -> None:
+    # filter family and sort by hour
+    d = df[df["family"] == family_name].copy()
+    d = d.sort_values(["algo", "hour"])
+
+    if algos_order is None:
+        algos = sorted(d["algo"].unique())
+    else:
+        algos = [a for a in algos_order if a in set(d["algo"].unique())]
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+
+    for algo in algos:
+        dd = d[d["algo"] == algo]
+        ax.plot(dd["hour"], dd[metric], label=algo)
+
+    ax.set_xlabel("Hour")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+
+    _savefig(fig, outpath)
+
+def _plot_bar_summary(df_summary: "pd.DataFrame",
+                      scope: str,
+                      metric: str,
+                      ylabel: str,
+                      title: str,
+                      outpath: Path,
+                      algos_order: list[str] | None = None) -> None:
+    d = df_summary[df_summary["scope"] == scope].copy()
+
+    if algos_order is None:
+        d = d.sort_values("algo")
+    else:
+        order = {a: i for i, a in enumerate(algos_order)}
+        d["__ord"] = d["algo"].map(lambda x: order.get(x, 999))
+        d = d.sort_values("__ord")
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+
+    ax.bar(d["algo"], d[metric])
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.grid(True, axis="y", alpha=0.3)
+    plt.xticks(rotation=20, ha="right")
+
+    _savefig(fig, outpath)
+
+def run_step14C_plots(outdir: Path) -> None:
+    plots_dir = outdir / "plots"
+    print("\n=== Step 14C: Plot generation ===")
+    print("plots_dir:", plots_dir.resolve())
+
+    # Load time-series CSVs
+    tsA_path = outdir / "step13A_interdomain_timeseries.csv"
+    tsB_path = outdir / "step13B_ospf_family_timeseries.csv"
+
+    if not tsA_path.exists() or not tsB_path.exists():
+        raise FileNotFoundError("Missing timeseries CSVs. Run Step 14B first.")
+
+    tsA = pd.read_csv(tsA_path)
+    tsB = pd.read_csv(tsB_path)
+
+    # Load summary CSVs (optional, for bar charts)
+    sumA_path = outdir / "step13A_interdomain.csv"
+    sumB_path = outdir / "step13B_ospf_family.csv"
+    sumA = pd.read_csv(sumA_path) if sumA_path.exists() else None
+    sumB = pd.read_csv(sumB_path) if sumB_path.exists() else None
+
+    # Algo orders (so plots look consistent)
+    interdomain_order = ["baseline_latency", "ciro_core", "lowcarb_bgp"]
+    ospf_order = ["OSPF", "C", "C+IncD", "CE"]
+
+    # ----------------------------
+    # Inter-domain family plots
+    # ----------------------------
+    _plot_timeseries(
+        tsA, "interdomain",
+        metric="carbon",
+        ylabel="Mean carbon (arb units)",
+        title="Inter-domain: Carbon vs time",
+        outpath=plots_dir / "interdomain_carbon_vs_time",
+        algos_order=interdomain_order,
+    )
+
+    _plot_timeseries(
+        tsA, "interdomain",
+        metric="latency_ms",
+        ylabel="Mean latency (ms)",
+        title="Inter-domain: Latency vs time",
+        outpath=plots_dir / "interdomain_latency_vs_time",
+        algos_order=interdomain_order,
+    )
+
+    _plot_timeseries(
+        tsA, "interdomain",
+        metric="reroute_pct",
+        ylabel="Reroute rate (%)",
+        title="Inter-domain: Reroute rate vs time",
+        outpath=plots_dir / "interdomain_reroute_vs_time",
+        algos_order=interdomain_order,
+    )
+
+    # emissions + deltaE (you added these, good)
+    if "emissions_proxy" in tsA.columns:
+        _plot_timeseries(
+            tsA, "interdomain",
+            metric="emissions_proxy",
+            ylabel="Emissions proxy (paper metric)",
+            title="Inter-domain: Emissions proxy vs time",
+            outpath=plots_dir / "interdomain_emissions_proxy_vs_time",
+            algos_order=interdomain_order,
+        )
+    if "deltaE_pct" in tsA.columns:
+        _plot_timeseries(
+            tsA, "interdomain",
+            metric="deltaE_pct",
+            ylabel="ΔE vs baseline (%)",
+            title="Inter-domain: Emissions reduction (ΔE) vs time",
+            outpath=plots_dir / "interdomain_deltaE_vs_time",
+            algos_order=interdomain_order,
+        )
+
+    # ----------------------------
+    # OSPF-metric family plots
+    # ----------------------------
+    _plot_timeseries(
+        tsB, "ospf_metric",
+        metric="carbon",
+        ylabel="Mean carbon (arb units)",
+        title="OSPF-family: Carbon vs time",
+        outpath=plots_dir / "ospf_family_carbon_vs_time",
+        algos_order=ospf_order,
+    )
+
+    _plot_timeseries(
+        tsB, "ospf_metric",
+        metric="latency_ms",
+        ylabel="Mean latency (ms)",
+        title="OSPF-family: Latency vs time",
+        outpath=plots_dir / "ospf_family_latency_vs_time",
+        algos_order=ospf_order,
+    )
+
+    _plot_timeseries(
+        tsB, "ospf_metric",
+        metric="reroute_pct",
+        ylabel="Reroute rate (%)",
+        title="OSPF-family: Reroute rate vs time",
+        outpath=plots_dir / "ospf_family_reroute_vs_time",
+        algos_order=ospf_order,
+    )
+
+    if "emissions_proxy" in tsB.columns:
+        _plot_timeseries(
+            tsB, "ospf_metric",
+            metric="emissions_proxy",
+            ylabel="Emissions proxy (paper metric)",
+            title="OSPF-family: Emissions proxy vs time",
+            outpath=plots_dir / "ospf_family_emissions_proxy_vs_time",
+            algos_order=ospf_order,
+        )
+
+    if "deltaE_pct" in tsB.columns:
+        _plot_timeseries(
+            tsB, "ospf_metric",
+            metric="deltaE_pct",
+            ylabel="ΔE vs OSPF (%)",
+            title="OSPF-family: Emissions reduction (ΔE) vs time",
+            outpath=plots_dir / "ospf_family_deltaE_vs_time",
+            algos_order=ospf_order,
+        )
+
+    # ----------------------------
+    # Optional: Summary bar charts (hour0 + mean24h)
+    # ----------------------------
+    if sumA is not None:
+        _plot_bar_summary(
+            sumA, "mean24h",
+            metric="deltaC_pct",
+            ylabel="ΔC over 24h (%)",
+            title="Inter-domain: 24h carbon reduction vs baseline",
+            outpath=plots_dir / "interdomain_bar_deltaC_24h",
+            algos_order=interdomain_order,
+        )
+        if "deltaE_pct" in sumA.columns:
+            _plot_bar_summary(
+                sumA, "mean24h",
+                metric="deltaE_pct",
+                ylabel="ΔE over 24h (%)",
+                title="Inter-domain: 24h emissions reduction vs baseline",
+                outpath=plots_dir / "interdomain_bar_deltaE_24h",
+                algos_order=interdomain_order,
+            )
+
+    if sumB is not None:
+        _plot_bar_summary(
+            sumB, "mean24h",
+            metric="deltaC_pct",
+            ylabel="ΔC over 24h (%)",
+            title="OSPF-family: 24h carbon reduction vs OSPF",
+            outpath=plots_dir / "ospf_family_bar_deltaC_24h",
+            algos_order=ospf_order,
+        )
+        if "deltaE_pct" in sumB.columns:
+            _plot_bar_summary(
+                sumB, "mean24h",
+                metric="deltaE_pct",
+                ylabel="ΔE over 24h (%)",
+                title="OSPF-family: 24h emissions reduction vs OSPF",
+                outpath=plots_dir / "ospf_family_bar_deltaE_24h",
+                algos_order=ospf_order,
+            )
+
+    print("Done. Wrote plots to:", plots_dir.resolve())
+
+
+# Call it after Step 14B finishes:
+# run_step14C_plots(outdir)
+
 
 def _print_step13_tables(title: str, res) -> None:
     print(f"\n{title}\n")

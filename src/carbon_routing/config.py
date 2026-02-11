@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class TopologyConfig:
-    n_as: int = 120 # number of autonomous systems
+    n_as: int = 500 # number of autonomous systems
     m_links_per_new_node: int = 3  # Barabási–Albert parameter
     seed: int = 42 # random seed for topology generation
 
