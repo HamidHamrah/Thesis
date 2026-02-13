@@ -6,8 +6,7 @@ import networkx as nx
 
 from ..algorithms.base import AlgoContext
 from ..algorithms.ce import run_ce
-from ..metrics.path_cost import path_carbon, path_latency, path_dir_load_for_pairs
-from ..metrics.utilization import compute_link_utilization
+from ..metrics.path_cost import path_carbon, path_latency
 
 
 @dataclass(frozen=True)
@@ -26,14 +25,14 @@ def run_ce_over_day(
 ) -> List[CEDayRow]:
     """
     Run CE over 24h where hour t uses utilization from hour t-1.
-    For hour 0, prev_util = zeros.
+    For hour 0, previous node utilization = zeros.
     """
     prev_paths: Dict[Tuple[int, int], List[int]] | None = None
-    prev_util: Dict[Tuple[int, int], float] = {}  # empty => treated as 0
+    prev_node_util: Dict[int, float] = {}
     rows: List[CEDayRow] = []
 
     for h in range(hours):
-        res = run_ce(ctx, pairs=pairs, hour=h, prev_util_undir=prev_util, gamma=gamma)
+        res = run_ce(ctx, pairs=pairs, hour=h, prev_node_util_mbps=prev_node_util)
         paths = res.paths
 
         # costs
@@ -49,9 +48,12 @@ def run_ce_over_day(
             changed = sum(1 for k in paths if paths[k] != prev_paths.get(k))
             rr = 100.0 * changed / len(paths) if paths else 0.0
 
-        # compute directed loads from chosen paths and update utilization for next hour
-        dir_load = path_dir_load_for_pairs(paths, ctx.tm)  # if you have TM; else use unit demand
-        prev_util = compute_link_utilization(ctx.g, dir_load)
+        # update node utilization for next hour (unit-demand proxy)
+        node_u: Dict[int, float] = {}
+        for p in paths.values():
+            for _a, b in zip(p[:-1], p[1:]):
+                node_u[b] = node_u.get(b, 0.0) + 1.0
+        prev_node_util = node_u
 
         rows.append(
             CEDayRow(

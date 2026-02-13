@@ -6,7 +6,7 @@ import networkx as nx
 from .base import RoutingAlgorithm, AlgoContext
 from ..ci.base import CIProvider
 from ..routing.candidates import k_shortest_paths_latency
-from ..metrics.path_cost import compute_path_cost
+from ..metrics.cidt import forecast_path_cidt_proxy
 
 Pair = Tuple[int, int]
 Paths = Dict[Pair, List[int]]
@@ -41,21 +41,36 @@ class CIRoCore(RoutingAlgorithm):
     ) -> Sequence[int]:
         cands = k_shortest_paths_latency(g, src, dst, k=ctx.k_paths)
 
+        # Faithful mode: day-ahead CIDT forecast vectors and additive path CIDT proxy.
+        # We score each candidate with the first W forecast entries (W <= 24 by default).
+        H = max(1, int(ctx.ciro_forecast_horizon_hours))
         W = max(1, int(ctx.forecast_window_hours))
+        W = min(W, H)
 
-        # We don't know the CI provider horizon here, so we just clamp by trying hours
-        # (Synthetic provider will raise if out of range; we handle by stopping early).
         def forecast_score(path: Sequence[int]) -> float:
-            vals = []
-            for h in range(hour, hour + W):
-                try:
-                    vals.append(compute_path_cost(g, ci, path, hour=h).carbon)
-                except Exception:
-                    break
+            if ctx.paper_faithful and ctx.router_params is not None:
+                vals = forecast_path_cidt_proxy(
+                    ci=ci,
+                    router_params=ctx.router_params,
+                    path=path,
+                    start_hour=hour,
+                    horizon_hours=H,
+                )
+            else:
+                # Backward-compatible fallback proxy: additive CI sum over path.
+                vals = []
+                for h in range(hour, hour + H):
+                    try:
+                        vals.append(float(sum(ci.get_ci(asn, h) for asn in path)))
+                    except Exception:
+                        break
+
             if not vals:
-                # fallback: use current hour only
-                return compute_path_cost(g, ci, path, hour=hour).carbon
-            return float(sum(vals) / len(vals))
+                try:
+                    return float(sum(ci.get_ci(asn, hour) for asn in path))
+                except Exception:
+                    return float("inf")
+            return float(sum(vals[:W]) / len(vals[:W]))
 
         best_path = None
         best_score = float("inf")
@@ -74,7 +89,7 @@ def run_ciro_core(
     router_params: Any,
     pairs: List[Pair],
     hour: int = 0,
-    horizon: int = 6,
+    horizon: int = 24,
 ) -> Paths:
     """
     Wrapper function for CIRo-Core algorithm.
@@ -82,6 +97,8 @@ def run_ciro_core(
     ctx = AlgoContext(
         k_paths=8,
         forecast_window_hours=horizon,
+        ciro_forecast_horizon_hours=24,
+        paper_faithful=True,
         g=g,
         ci=ci,
         router_params=router_params,

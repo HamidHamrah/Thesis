@@ -29,6 +29,20 @@ class AlgoContext:
     # CIRo-style forecast lookahead window (hours). Used by CIRo-Core.
     forecast_window_hours: int = 4
 
+    # Toggle exact paper-faithful logic where available.
+    paper_faithful: bool = True
+
+    # CIRo CIDT scoring assumptions.
+    ciro_forecast_horizon_hours: int = 24
+    ciro_demand_mbps: float = 100.0
+
+    # Low-Carb BGP policy controls (paper-inspired transposition to BGP attrs).
+    lcb_aggregate: str = "TCIM"          # TCIM | MCIM | HCIM
+    lcb_transpose_attr: str = "local_pref"  # local_pref | weight | med | aspath
+    lcb_base_pref: int = 10_000
+    lcb_hcim_threshold: float | None = None  # optional route-filter threshold
+    lcb_default_cim: float = 1_000.0
+
     # Optional shared objects for algorithms that need more context (e.g., CE).
     g: nx.Graph | None = None
     ci: CIProvider | None = None

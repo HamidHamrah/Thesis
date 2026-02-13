@@ -83,8 +83,8 @@ def build_table1_metric_specs(
     def C_Elabel(i, j, h):  return 1.0 + ci.get_ci(j, h) * params[j].elabel_cost
     def C_IncD(i, j, h):    return 1.0 + params[j].incd_w_per_mbps * ci.get_ci(j, h)
 
-    # CE uses utilization from previous interval U_{j,Δt}. We stub U=0 for Step 10,
-    # and we will hook it properly when we implement traffic-matrix-based CATE. :contentReference[oaicite:15]{index=15}
+    # CE uses utilization from previous interval U_{j,Δt}. For this static metric
+    # builder, we use U=0 as a neutral placeholder. :contentReference[oaicite:15]{index=15}
     def CE(i, j, h):
         U_prev_mbps = 0.0
         power_kw = params[j].pidle_kw + params[j].incd_w_per_mbps * U_prev_mbps

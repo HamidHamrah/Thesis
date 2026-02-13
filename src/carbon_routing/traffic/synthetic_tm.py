@@ -10,7 +10,7 @@ def generate_synthetic_tm(
 ) -> Dict[Tuple[int, int], float]:
     """
     Synthetic traffic matrix: a dict (src,dst)->Mbps.
-    CATE needs a predicted TM; we start synthetic and can replace later.
+    Useful for experiments that require demand-weighted evaluation.
     """
     rng = random.Random(seed)
     tm: Dict[Tuple[int, int], float] = {}

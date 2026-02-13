@@ -5,7 +5,6 @@ from typing import Dict, Tuple, List, Any, Optional
 
 import networkx as nx
 
-from ..metrics.utilization import compute_link_utilization
 from .all_runner import Pair, Paths, AlgoRunner
 
 
@@ -26,6 +25,7 @@ except ImportError:
         return out
 from ..algorithms.ciro_core import run_ciro_core
 from ..algorithms.lowcarb_bgp import run_lowcarb_bgp
+from ..algorithms.carbon_optimal_as_path import run_carbon_optimal_as_path
 from ..algorithms.ospf_metrics import run_ospf, run_c, run_c_incd
 from ..algorithms.ce import run_ce_wrapper
 
@@ -50,7 +50,7 @@ class CiroCoreRunner(AlgoRunner):
     ci: Any
     router_params: Any
     pairs: List[Pair]
-    horizon: int = 6  # if you used this earlier
+    horizon: int = 24
 
     def reset(self) -> None:
         pass
@@ -77,6 +77,29 @@ class LowCarbBGPRunner(AlgoRunner):
         return run_lowcarb_bgp(
             self.g, self.ci, self.router_params, self.pairs,
             hour=hour, k=self.k, alpha=self.alpha, latency_bound=self.latency_bound
+        )
+
+
+@dataclass
+class CarbonOptimalASPathRunner(AlgoRunner):
+    name: str
+    g: nx.Graph
+    ci: Any
+    router_params: Any
+    pairs: List[Pair]
+    k: int = 8
+
+    def reset(self) -> None:
+        pass
+
+    def run_hour(self, hour: int) -> Paths:
+        return run_carbon_optimal_as_path(
+            self.g,
+            self.ci,
+            self.router_params,
+            self.pairs,
+            hour=hour,
+            k=self.k,
         )
 
 
@@ -132,13 +155,13 @@ class CERunner(AlgoRunner):
     ci: Any
     router_params: Any
     pairs: List[Pair]
-    gamma: float = 1.0
+    gamma: float = 1.0  # kept for compatibility; CE now uses beta scaling internally
 
-    prev_util_undir: Dict[Tuple[int, int], float] = None
+    prev_node_util_mbps: Dict[int, float] = None
     prev_paths: Optional[Paths] = None
 
     def reset(self) -> None:
-        self.prev_util_undir = {}
+        self.prev_node_util_mbps = {}
         self.prev_paths = None
 
     def run_hour(self, hour: int) -> Paths:
@@ -148,16 +171,16 @@ class CERunner(AlgoRunner):
             router_params=self.router_params,
             pairs=self.pairs,
             hour=hour,
-            prev_util_undir=self.prev_util_undir,
+            prev_node_util_mbps=self.prev_node_util_mbps,
             gamma=self.gamma,
         )
         paths = res["paths"] if isinstance(res, dict) else res.paths
 
-        # update utilization for next hour (unit-demand proxy)
-        dir_load: Dict[Tuple[int, int], float] = {}
+        # update node utilization for next hour (unit-demand proxy in Mbps)
+        node_u: Dict[int, float] = {}
         for p in paths.values():
             for a, b in zip(p[:-1], p[1:]):
-                dir_load[(a, b)] = dir_load.get((a, b), 0.0) + 1.0
-        self.prev_util_undir = compute_link_utilization(self.g, dir_load)
+                node_u[b] = node_u.get(b, 0.0) + 1.0
+        self.prev_node_util_mbps = node_u
 
         return paths
