@@ -1,38 +1,44 @@
 from __future__ import annotations
+import argparse
+import csv
 import random
+from datetime import datetime
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 import networkx as nx
+import pandas as pd
+
+from .algorithms import BaselineLatency, CIRoCore, LowCarbBGP, AlgoContext
+from .algorithms.ce import run_ce
+from .algorithms.ospf_metrics import OspfMetricRouting, build_table1_metric_specs
+from .benchmark.all_runner import run_all
+from .benchmark.multiseed_runner import (
+    export_multiseed_artifacts,
+    print_multiseed_summary,
+    run_multiseed_evaluation,
+    summarize_multiseed_results,
+)
+from .benchmark.paper_runner import run_paper_benchmark
+from .benchmark.registry import (
+    BaselineRunner,
+    CIncDRunner,
+    CERunner,
+    CiroCoreRunner,
+    CarbonOptimalASPathRunner,
+    CRunner,
+    LowCarbBGPRunner,
+    OspfRunner,
+)
+from .benchmark.runner import run_benchmark
+from .benchmark.time_runner import run_time_benchmark
+from .ci.synthetic import SyntheticCIProvider
 from .config import RunConfig
+from .device import generate_router_params
+from .metrics.path_cost import compute_path_cost
+from carbon_routing.metrics.emissions_proxy import mean_emissions_proxy_for_paths
 from .topology.generator import generate_as_topology
 from .topology.stats import topology_summary, sample_path_exists
-from .ci.synthetic import SyntheticCIProvider
-from .metrics.path_cost import compute_path_cost
-from .algorithms import BaselineLatency, AlgoContext
-from .benchmark.runner import run_benchmark
-from .benchmark.time_runner import run_time_benchmark
-from .algorithms import BaselineLatency, CIRoCore, AlgoContext
-from .benchmark.runner import run_benchmark
-from .benchmark.time_runner import run_time_benchmark
-from .algorithms import BaselineLatency, LowCarbBGP, AlgoContext
-from .benchmark.runner import run_benchmark
-from .benchmark.time_runner import run_time_benchmark
-from .device import generate_router_params
-from .algorithms.ospf_metrics import OspfMetricRouting, build_table1_metric_specs
-from .benchmark.paper_runner import run_paper_benchmark
-from .algorithms.ce import run_ce
-from .benchmark.all_runner import run_all
-from .benchmark.registry import (
-    BaselineRunner, CiroCoreRunner, LowCarbBGPRunner, CarbonOptimalASPathRunner,
-    OspfRunner, CRunner, CIncDRunner, CERunner
-)
-from carbon_routing.metrics.emissions_proxy import mean_emissions_proxy_for_paths
-import random
-from carbon_routing.metrics.emissions_proxy import mean_emissions_proxy_for_paths
-from pathlib import Path
-import csv
-from datetime import datetime
-import matplotlib.pyplot as plt
-import pandas as pd
-from pathlib import Path
 
 
 def _unified_summary_fields(s):
@@ -1086,8 +1092,62 @@ def write_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> None:
         w.writeheader()
         w.writerows(rows)
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Carbon-routing benchmark runner")
+    parser.add_argument(
+        "--single-seed",
+        action="store_true",
+        help="Run the original single-seed pipeline instead of multi-seed aggregation.",
+    )
+    parser.add_argument(
+        "--r",
+        type=int,
+        default=20,
+        help="Number of seeds for multi-seed evaluation.",
+    )
+    parser.add_argument(
+        "--base-seed",
+        type=int,
+        default=42,
+        help="First seed in the multi-seed sequence.",
+    )
+    parser.add_argument(
+        "--hours",
+        type=int,
+        default=24,
+        help="Number of simulated hours per seed for multi-seed evaluation.",
+    )
+    parser.add_argument(
+        "--n-pairs",
+        type=int,
+        default=200,
+        help="Number of source-destination pairs sampled per seed.",
+    )
+    return parser.parse_args()
+
 def main() -> None:
+    args = parse_args()
     cfg = RunConfig()
+
+    if not args.single_seed:
+        seeds, per_seed_results, timeseries_seed_rows, day_seed_rows = run_multiseed_evaluation(
+            base_cfg=cfg,
+            r=args.r,
+            base_seed=args.base_seed,
+            hours=args.hours,
+            n_pairs=args.n_pairs,
+        )
+        summary = summarize_multiseed_results(per_seed_results)
+        print_multiseed_summary(seeds, summary)
+        outdir = export_multiseed_artifacts(
+            seeds,
+            per_seed_results,
+            summary,
+            timeseries_seed_rows=timeseries_seed_rows,
+            day_seed_rows=day_seed_rows,
+        )
+        print(f"\nWrote multi-seed CSV/plots to: {outdir.resolve()}")
+        return
 
     # Build topology + CI provider once
     g = generate_as_topology(cfg.topology)
